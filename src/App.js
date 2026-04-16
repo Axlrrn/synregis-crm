@@ -45,7 +45,7 @@ const PRC = {
   "Top Priority":"#ef4444","High":"#f59e0b","Warm":"#f97316","Cold":"#6b8aaa","Inbound Only":"#3b82f6",
 };
 
-const LOGO_SRC = "";
+const LOGO_SRC = "/logo.png";
 
 // ── Export helper ─────────────────────────────────────────────────────────────
 function exportData(leads) {
