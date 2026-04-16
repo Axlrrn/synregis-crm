@@ -659,7 +659,7 @@ export default function App() {
       </div>
 
       {/* Main layout */}
-      <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
+      <div style={{ display:"flex", flex:1, overflow:"hidden", position:"relative" }}>
 
         {/* Left: lead list */}
         <div style={{ width:300, flexShrink:0, borderRight:"1px solid "+BORDER, display:"flex", flexDirection:"column", background:CARD }}>
