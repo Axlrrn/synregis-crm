@@ -695,7 +695,12 @@ export default function App() {
         {/* Right: detail panel */}
         <div style={{ flex:1, display:"flex", flexDirection:"column", background:CARD, overflow:"hidden", ...(window.innerWidth<640&&selFull?{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}:{}) }}>
           {selFull
-            ? <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onSelect={function(r){ setSelected(r); }}/>
+            ? <div style={{display:"flex", flexDirection:"column", height:"100%"}}>
+                <div style={{padding:"10px 16px", borderBottom:"1px solid "+BORDER, flexShrink:0}}>
+                  <button onClick={function(){ setSelected(null); }} style={{padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13}}>← Back</button>
+                </div>
+                <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onSelect={function(r){ setSelected(r); }}/>
+              </div>
             : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
           }
         </div>
