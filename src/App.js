@@ -693,7 +693,7 @@ export default function App() {
         </div>
 
         {/* Right: detail panel */}
-        <div style={{ flex:1, display:"flex", flexDirection:"column", background:CARD, overflow:"hidden" }}>
+        <div style={{ flex:1, display:"flex", flexDirection:"column", background:CARD, overflow:"hidden", ...(window.innerWidth<640&&selFull?{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}:{}) }}>
           {selFull
             ? <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onSelect={function(r){ setSelected(r); }}/>
             : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
