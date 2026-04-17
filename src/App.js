@@ -485,6 +485,7 @@ export default function App() {
   var [search, setSearch]             = useState("");
   var [filterPipeline, setFilterPipeline] = useState("All");
   var [filterPriority, setFilterPriority] = useState("All");
+  var [showArchive, setShowArchive] = useState(false);
   var [showAdd, setShowAdd]           = useState(false);
   var [editLead, setEditLead]         = useState(null);
   var [editDraft, setEditDraft]       = useState(null);
@@ -525,7 +526,8 @@ export default function App() {
     var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
     var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
     var matchR = filterPriority === "All"  || l.priority === filterPriority;
-    return matchQ && matchP && matchR;
+    if (showArchive) return l.pipelineStage === "Lost" && matchQ;
+    return l.pipelineStage !== "Lost" && matchQ && matchP && matchR;
   });
 
   var counts = {};
@@ -675,6 +677,10 @@ export default function App() {
               <button onClick={function(){ setShowAdd(true); }}
                 style={{ padding:"7px 12px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
                 + Add
+              </button>
+              <button onClick={function(){ setShowArchive(!showArchive); setSelected(null); }}
+                style={{ padding:"7px 12px", borderRadius:6, border:"1px solid #ef444466", background:showArchive?"#ef4444":"transparent", color:showArchive?"#fff":"#ef4444", cursor:"pointer", fontSize:12, flexShrink:0 }}>
+                {showArchive ? "← Pipeline" : "Lost"}
               </button>
             </div>
           </div>

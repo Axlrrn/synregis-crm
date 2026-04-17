@@ -1,21 +1,47 @@
 const fs = require('fs');
 let c = fs.readFileSync('src/App.js', 'utf8');
 
+// Add archive state after filterPriority state
 c = c.replace(
-  `{selFull
-            ? <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onSelect={function(r){ setSelected(r); }}/>
-            : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
-          }`,
-  `{selFull
-            ? <div style={{display:"flex", flexDirection:"column", height:"100%"}}>
-                <div style={{padding:"10px 16px", borderBottom:"1px solid "+BORDER, flexShrink:0}}>
-                  <button onClick={function(){ setSelected(null); }} style={{padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13}}>← Back</button>
-                </div>
-                <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onSelect={function(r){ setSelected(r); }}/>
-              </div>
-            : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
-          }`
+  `var [filterPriority, setFilterPriority] = useState("All");`,
+  `var [filterPriority, setFilterPriority] = useState("All");
+  var [showArchive, setShowArchive] = useState(false);`
+);
+
+// Filter out Lost from main view, show only Lost in archive
+c = c.replace(
+  `var filtered = leads.filter(function(l) {
+    var q = search.toLowerCase();
+    var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
+    var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
+    var matchR = filterPriority === "All"  || l.priority === filterPriority;
+    return matchQ && matchP && matchR;
+  });`,
+  `var filtered = leads.filter(function(l) {
+    var q = search.toLowerCase();
+    var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
+    var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
+    var matchR = filterPriority === "All"  || l.priority === filterPriority;
+    if (showArchive) return l.pipelineStage === "Lost" && matchQ;
+    return l.pipelineStage !== "Lost" && matchQ && matchP && matchR;
+  });`
+);
+
+// Add archive toggle button next to the + Add button
+c = c.replace(
+  `<button onClick={function(){ setShowAdd(true); }}
+                style={{ padding:"7px 12px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
+                + Add
+              </button>`,
+  `<button onClick={function(){ setShowAdd(true); }}
+                style={{ padding:"7px 12px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
+                + Add
+              </button>
+              <button onClick={function(){ setShowArchive(!showArchive); setSelected(null); }}
+                style={{ padding:"7px 12px", borderRadius:6, border:"1px solid #ef444466", background:showArchive?"#ef4444":"transparent", color:showArchive?"#fff":"#ef4444", cursor:"pointer", fontSize:12, flexShrink:0 }}>
+                {showArchive ? "← Pipeline" : "Lost"}
+              </button>`
 );
 
 fs.writeFileSync('src/App.js', c);
-console.log('Done! Back button: ' + (c.includes('← Back') ? 'YES' : 'NO'));
+console.log('Done! Archive: ' + (c.includes('showArchive') ? 'YES' : 'NO'));
