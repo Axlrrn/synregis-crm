@@ -47,6 +47,47 @@ const PRC = {
 
 const LOGO_SRC = "/logo.png";
 
+// ── Phone matching helpers ────────────────────────────────────────────────────
+function normalizePhone(str) {
+  if (!str) return "";
+  var d = str.replace(/\D/g, "");
+  if (d.length > 8) {
+    if (d.startsWith("00230")) d = d.slice(5);
+    else if (d.startsWith("230")) d = d.slice(3);
+  }
+  return d;
+}
+function extractPhones(text) {
+  if (!text) return [];
+  var matches = text.match(/\b\d[\d\s\-\.]{4,9}\d\b/g);
+  if (!matches) return [];
+  return matches.map(function(m){ return normalizePhone(m); }).filter(function(n){ return n.length >= 6; });
+}
+function findPhoneMatches(phone, leadId, allLeads) {
+  if (!phone || !phone.trim()) return [];
+  var norm = normalizePhone(phone);
+  if (!norm || norm.length < 6) return [];
+  var results = [];
+  (allLeads || []).forEach(function(l) {
+    if (l.id === leadId) return;
+    if (l.phone && normalizePhone(l.phone) === norm) {
+      results.push({ lead: l, type: "exact" }); return;
+    }
+    if (l.notes && extractPhones(l.notes).indexOf(norm) !== -1) {
+      results.push({ lead: l, type: "notes" }); return;
+    }
+    var callText = (l.callLog || []).map(function(e){ return e.note||""; }).join(" ");
+    if (callText && extractPhones(callText).indexOf(norm) !== -1) {
+      results.push({ lead: l, type: "calllog" }); return;
+    }
+    var meetText = (l.meetingLog || []).map(function(e){ return e.note||""; }).join(" ");
+    if (meetText && extractPhones(meetText).indexOf(norm) !== -1) {
+      results.push({ lead: l, type: "meetinglog" });
+    }
+  });
+  return results;
+}
+
 // ── Export helper ─────────────────────────────────────────────────────────────
 function exportData(leads) {
   try {
@@ -219,6 +260,7 @@ function EditForm(props) {
           <Fld label="Promoteur" value={lead.promoteur} onChange={f("promoteur")}/>
           <Fld label="Contact Name" value={lead.contactName} onChange={f("contactName")}/>
           <Fld label="Phone" value={lead.phone} onChange={f("phone")}/>
+          <PhoneMatchInfo phone={lead.phone} leadId={lead.id} allLeads={props.allLeads||[]}/>
           {props.relatedCount > 0 && (
             <div
               onClick={function(){ props.setSyncContact(!props.syncContact); }}
@@ -275,6 +317,7 @@ function AddForm(props) {
           <Fld label="Promoteur" value={form.promoteur} onChange={f("promoteur")}/>
           <Fld label="Contact Name" value={form.contactName} onChange={f("contactName")}/>
           <Fld label="Phone" value={form.phone} onChange={f("phone")}/>
+          <PhoneMatchInfo phone={form.phone} leadId={null} allLeads={props.allLeads||[]}/>
           <Fld label="Units (total)" value={form.units} onChange={f("units")}/>
           <Fld label="Unit Details" value={form.unitDetails} onChange={f("unitDetails")} type="textarea"/>
           <Fld label="Amenities" value={form.amenities} onChange={f("amenities")} type="textarea"/>
@@ -401,6 +444,29 @@ function MeetingLogModal(props) {
   );
 }
 
+function PhoneMatchInfo(props) {
+  var matches = findPhoneMatches(props.phone, props.leadId, props.allLeads);
+  if (!matches.length) return null;
+  return (
+    <div style={{ marginTop:4, marginBottom:6 }}>
+      {matches.map(function(m, i) {
+        var isExact = m.type === "exact";
+        var src = m.type === "notes" ? "notes" : m.type === "calllog" ? "call log" : "meeting log";
+        var color = isExact ? "#ef4444" : "#f59e0b";
+        var label = isExact
+          ? "\u26a0 Same phone as " + m.lead.projectName + " (" + m.lead.promoteur + ")"
+          : "~ Possible match in " + src + " of " + m.lead.projectName;
+        return (
+          <div key={i} style={{ fontSize:11, color:color, background:color+"22", borderRadius:4,
+            padding:"3px 7px", marginBottom:3, border:"1px solid "+color+"44" }}>
+            {label}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function DetailPanel(props) {
   var lead = props.lead;
   var allLeads = props.allLeads;
@@ -445,7 +511,9 @@ function DetailPanel(props) {
         <div style={sec}><div style={lbl}>Location</div><div style={val}>{lead.location||"-"}</div></div>
         <div style={sec}><div style={lbl}>Promoteur</div><div style={val}>{lead.promoteur||"-"}</div></div>
         <div style={sec}><div style={lbl}>Contact</div><div style={val}>{lead.contactName||"-"}</div></div>
-        <div style={sec}><div style={lbl}>Phone</div><div style={val}>{lead.phone||"-"}</div></div>
+        <div style={sec}><div style={lbl}>Phone</div><div style={val}>{lead.phone||"-"}</div>
+          <PhoneMatchInfo phone={lead.phone} leadId={lead.id} allLeads={allLeads||[]}/>
+        </div>
         <div style={sec}><div style={lbl}>Total Units</div><div style={val}>{lead.units||"-"}</div></div>
         <div style={sec}><div style={lbl}>Project Stage</div><div style={val}>{lead.projectStage||"-"}</div></div>
         {lead.nextFollowUp && (<div style={sec}><div style={lbl}>Next Follow-Up</div><div style={val}>{lead.nextFollowUp}</div></div>)}
@@ -805,7 +873,7 @@ export default function App() {
       </div>
 
       {/* Modals */}
-      {showAdd && <AddForm onAdd={addLead} onCancel={function(){ setShowAdd(false); }}/>}
+      {showAdd && <AddForm allLeads={leads} onAdd={addLead} onCancel={function(){ setShowAdd(false); }}/>}
       {editLead && editDraft && (
         <EditForm
           lead={editDraft}
@@ -815,6 +883,7 @@ export default function App() {
           syncContact={syncContact}
           setSyncContact={setSyncContact}
           relatedCount={editRelatedCount}
+          allLeads={leads}
         />
       )}
       {callLogLead && (
