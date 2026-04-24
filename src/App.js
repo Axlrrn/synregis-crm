@@ -33,13 +33,13 @@ const MUTED  = "#6b8aaa";
 const BORDER = "#1c3550";
 const INP    = "#091525";
 
-const PIPELINE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence","Won","Lost","On Hold"];
+const PIPELINE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence","Won","Lost","On Hold","Unwanted"];
 const PROJECT_STAGES  = ["Pre-Launch/Off-Plan","Permitting & Planning","Under Construction","Finishing Works","Near Delivery","Delivered & Occupied","Stalled/Suspended"];
 const PRIORITIES      = ["Top Priority","High","Warm","Cold","Inbound Only"];
 
 const PC = {
   "Prospecting":"#6b7280","Proposal Sent":"#3b82f6","Negotiation":"#8b5cf6",
-  "Due Diligence":"#f59e0b","Won":"#10b981","Lost":"#ef4444","On Hold":"#9ca3af",
+  "Due Diligence":"#f59e0b","Won":"#10b981","Lost":"#ef4444","On Hold":"#9ca3af","Unwanted":"#6b5b45",
 };
 const PRC = {
   "Top Priority":"#ef4444","High":"#f59e0b","Warm":"#f97316","Cold":"#6b8aaa","Inbound Only":"#3b82f6",
@@ -667,8 +667,9 @@ export default function App() {
     var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
     var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
     var matchR = filterPriority === "All"  || l.priority === filterPriority;
-    if (showArchive) return l.pipelineStage === "Lost" && matchQ;
-    return l.pipelineStage !== "Lost" && matchQ && matchP && matchR;
+    var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
+    if (showArchive) return archived && matchQ;
+    return !archived && matchQ && matchP && matchR;
   });
 
   var counts = {};
@@ -841,7 +842,7 @@ export default function App() {
               </button>
               <button onClick={function(){ setShowArchive(!showArchive); setSelected(null); }}
                 style={{ padding:"7px 12px", borderRadius:6, border:"1px solid #ef444466", background:showArchive?"#ef4444":"transparent", color:showArchive?"#fff":"#ef4444", cursor:"pointer", fontSize:12, flexShrink:0 }}>
-                {showArchive ? "← Pipeline" : "Lost"}
+                {showArchive ? "← Pipeline" : "Archive"}
               </button>
             </div>
           </div>
