@@ -270,7 +270,7 @@ function EditForm(props) {
               <input type="checkbox" checked={props.syncContact} readOnly
                 style={{ accentColor:GOLD, width:14, height:14, cursor:"pointer" }}/>
               <span style={{ fontSize:12, color:GOLD }}>
-                Apply contact &amp; phone to {props.relatedCount} other {lead.promoteur} project{props.relatedCount > 1 ? "s" : ""}
+                Apply contact, phone &amp; notes to {props.relatedCount} other {lead.promoteur} project{props.relatedCount > 1 ? "s" : ""}
               </span>
             </div>
           )}
@@ -705,6 +705,7 @@ export default function App() {
             batch.update(doc(db, "leads", String(l.id)), {
               contactName: draft.contactName,
               phone: draft.phone,
+              notes: draft.notes,
             });
           });
           await batch.commit();
