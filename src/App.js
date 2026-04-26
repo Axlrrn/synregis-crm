@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore,
@@ -9,7 +9,10 @@ import {
   updateDoc,
   writeBatch,
   arrayUnion,
+  setDoc,
+  getDoc,
 } from "firebase/firestore";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -22,6 +25,7 @@ const firebaseConfig = {
 };
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
+const storage = getStorage(fbApp);
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const NAVY   = "#08111f";
@@ -34,6 +38,7 @@ const BORDER = "#1c3550";
 const INP    = "#091525";
 
 const PIPELINE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence","Won","Lost","On Hold","Unwanted"];
+const DEFAULT_REGIONS = ["North","South","East","West","Center"];
 const PROJECT_STAGES  = ["Pre-Launch/Off-Plan","Permitting & Planning","Under Construction","Finishing Works","Near Delivery","Delivered & Occupied","Stalled/Suspended"];
 const PRIORITIES      = ["Top Priority","High","Warm","Cold","Inbound Only"];
 
@@ -236,6 +241,97 @@ function Fld(props) {
   );
 }
 
+
+function AttachmentsSection(props) {
+  var lead = props.lead;
+  var attachments = lead.attachments || [];
+  var fileRef = useRef(null);
+  var [uploading, setUploading] = useState(false);
+  async function handleFile(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      var path = "attachments/" + String(lead.id) + "/" + Date.now() + "_" + file.name;
+      var sRef = storageRef(storage, path);
+      await uploadBytes(sRef, file);
+      var url = await getDownloadURL(sRef);
+      var meta = { name: file.name, url: url, uploadedAt: new Date().toISOString().split("T")[0] };
+      await updateDoc(doc(db, "leads", String(lead.id)), { attachments: arrayUnion(meta) });
+    } catch(err) { alert("Upload failed: " + err.message); }
+    setUploading(false);
+    e.target.value = "";
+  }
+  return (
+    <div style={{ marginTop:8 }}>
+      <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:600, marginBottom:8 }}>Attachments</div>
+      {attachments.length === 0 && <div style={{ fontSize:12, color:MUTED, marginBottom:8 }}>No attachments yet.</div>}
+      {attachments.map(function(a, i) {
+        return (
+          <div key={i} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, padding:"6px 10px", background:CARD2, borderRadius:6, border:"1px solid "+BORDER }}>
+            <span style={{ fontSize:13, color:"#ef4444" }}>PDF</span>
+            <span style={{ flex:1, fontSize:12, color:CREAM, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</span>
+            <span style={{ fontSize:11, color:MUTED, flexShrink:0 }}>{a.uploadedAt}</span>
+            <a href={a.url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:11, color:GOLD, textDecoration:"none", flexShrink:0, padding:"3px 8px", border:"1px solid "+GOLD+"44", borderRadius:4 }}>
+              View
+            </a>
+          </div>
+        );
+      })}
+      <input ref={fileRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={handleFile}/>
+      <button disabled={uploading} onClick={function(){ fileRef.current && fileRef.current.click(); }}
+        style={{ padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent",
+          color:GOLD, cursor:"pointer", fontSize:12, opacity:uploading?0.5:1 }}>
+        {uploading ? "Uploading..." : "+ Attach PDF"}
+      </button>
+    </div>
+  );
+}
+
+function RegionEditModal(props) {
+  var [list, setList] = useState(props.regions.slice());
+  var [newVal, setNewVal] = useState("");
+  function add() {
+    var v = newVal.trim();
+    if (!v || list.includes(v)) return;
+    setList(list.concat(v));
+    setNewVal("");
+  }
+  function remove(i) { setList(list.filter(function(_,j){ return j!==i; })); }
+  function save() { props.onSave(list); }
+  var ovl = { position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center" };
+  var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"86%", maxWidth:380, padding:24 };
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget) props.onClose(); }}>
+      <div style={sht}>
+        <div style={{ color:GOLD, fontWeight:700, fontSize:15, marginBottom:16 }}>Edit Regions</div>
+        {list.map(function(r, i) {
+          return (
+            <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 10px",
+              background:CARD2, borderRadius:6, marginBottom:6, border:"1px solid "+BORDER }}>
+              <span style={{ color:CREAM, fontSize:13 }}>{r}</span>
+              <button onClick={function(){ remove(i); }}
+                style={{ background:"none", border:"none", color:MUTED, cursor:"pointer", fontSize:16, lineHeight:1 }}>x</button>
+            </div>
+          );
+        })}
+        <div style={{ display:"flex", gap:8, marginTop:10 }}>
+          <input value={newVal} onChange={function(e){ setNewVal(e.target.value); }}
+            onKeyDown={function(e){ if(e.key==="Enter") add(); }}
+            placeholder="New region..."
+            style={{ flex:1, background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"7px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
+          <button onClick={add} style={{ padding:"7px 14px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700 }}>Add</button>
+        </div>
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end", marginTop:16 }}>
+          <button onClick={props.onClose} style={{ padding:"7px 16px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:13 }}>Cancel</button>
+          <button onClick={save} style={{ padding:"7px 16px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700 }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditForm(props) {
   var lead = props.lead;
   var set = props.setLead;
@@ -281,6 +377,8 @@ function EditForm(props) {
           <Fld label="Pipeline Stage" value={lead.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
           <Fld label="Priority" value={lead.priority} onChange={f("priority")} type="select" options={PRIORITIES}/>
           <Fld label="Next Follow-Up" value={lead.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
+          <Fld label="Region" value={lead.region||""} onChange={f("region")} type="select" options={[""].concat(props.regions||DEFAULT_REGIONS)}/>
+          <Fld label="GPS Coordinates" value={lead.gpsCoords||""} onChange={f("gpsCoords")}/>
           <Fld label="Notes" value={lead.notes} onChange={f("notes")} type="textarea"/>
         </div>
         <div style={{ padding:"14px 20px", borderTop:"1px solid "+BORDER, flexShrink:0, display:"flex", gap:10, justifyContent:"flex-end" }}>
@@ -297,7 +395,8 @@ function AddForm(props) {
     projectName:"", location:"", promoteur:"", promoteurKey:"", promoteurFull:"",
     contactName:"", phone:"", units:"", unitDetails:"", amenities:"",
     projectStage:PROJECT_STAGES[0], pipelineStage:PIPELINE_STAGES[0],
-    priority:PRIORITIES[2], notes:"", callLog:[], nextFollowUp:"", createdAt:""
+    priority:PRIORITIES[2], notes:"", callLog:[], nextFollowUp:"", createdAt:"",
+    region:"", gpsCoords:"", attachments:[]
   };
   var [form, setForm] = useState(blank);
   function f(k) { return function(v){ setForm(function(p){ return {...p,[k]:v}; }); }; }
@@ -325,6 +424,8 @@ function AddForm(props) {
           <Fld label="Pipeline Stage" value={form.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
           <Fld label="Priority" value={form.priority} onChange={f("priority")} type="select" options={PRIORITIES}/>
           <Fld label="Next Follow-Up" value={form.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
+          <Fld label="Region" value={form.region||""} onChange={f("region")} type="select" options={[""].concat(props.regions||DEFAULT_REGIONS)}/>
+          <Fld label="GPS Coordinates" value={form.gpsCoords||""} onChange={f("gpsCoords")}/>
           <Fld label="Notes" value={form.notes} onChange={f("notes")} type="textarea"/>
         </div>
         <div style={{ padding:"14px 20px", borderTop:"1px solid "+BORDER, flexShrink:0, display:"flex", gap:10, justifyContent:"flex-end" }}>
@@ -516,6 +617,17 @@ function DetailPanel(props) {
         </div>
         <div style={sec}><div style={lbl}>Total Units</div><div style={val}>{lead.units||"-"}</div></div>
         <div style={sec}><div style={lbl}>Project Stage</div><div style={val}>{lead.projectStage||"-"}</div></div>
+        {lead.region && <div style={sec}><div style={lbl}>Region</div><div style={val}>{lead.region}</div></div>}
+        {lead.gpsCoords && (
+          <div style={sec}>
+            <div style={lbl}>GPS</div>
+            <a href={"https://maps.google.com/?q="+encodeURIComponent(lead.gpsCoords)}
+              target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:13, color:GOLD, textDecoration:"none" }}>
+              📍 {lead.gpsCoords}
+            </a>
+          </div>
+        )}
         {lead.nextFollowUp && (<div style={sec}><div style={lbl}>Next Follow-Up</div><div style={val}>{lead.nextFollowUp}</div></div>)}
       </div>
 
@@ -587,6 +699,9 @@ function DetailPanel(props) {
           })}
         </div>
       )}
+      <div style={{ marginTop:20, borderTop:"1px solid "+BORDER, paddingTop:16 }}>
+        <AttachmentsSection lead={lead}/>
+      </div>
     </div>
   );
 }
@@ -632,6 +747,9 @@ export default function App() {
   var [syncContact, setSyncContact]   = useState(false);
   var [callLogLead, setCallLogLead]       = useState(null);
   var [meetingLogLead, setMeetingLogLead] = useState(null);
+  var [filterRegion, setFilterRegion]     = useState("All");
+  var [regions, setRegions]               = useState(DEFAULT_REGIONS);
+  var [showEditRegions, setShowEditRegions] = useState(false);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
   useEffect(function() {
@@ -661,15 +779,33 @@ export default function App() {
     return function() { unsub(); };
   }, []);
 
+  // ── Load/save custom regions ───────────────────────────────────────────────
+  useEffect(function() {
+    async function loadRegions() {
+      try {
+        var snap = await getDoc(doc(db, "config", "app"));
+        if (snap.exists() && snap.data().regions) { setRegions(snap.data().regions); }
+      } catch(e) { /* use defaults */ }
+    }
+    loadRegions();
+  }, []);
+
+  async function saveRegions(list) {
+    setRegions(list);
+    setShowEditRegions(false);
+    try { await setDoc(doc(db, "config", "app"), { regions: list }, { merge: true }); } catch(e) {}
+  }
+
   // ── Derived state ──────────────────────────────────────────────────────────
   var filtered = leads.filter(function(l) {
     var q = search.toLowerCase();
     var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
     var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
-    var matchR = filterPriority === "All"  || l.priority === filterPriority;
+    var matchR   = filterPriority === "All"  || l.priority === filterPriority;
+    var matchReg = filterRegion === "All" || l.region === filterRegion;
     var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
     if (showArchive) return archived && matchQ;
-    return !archived && matchQ && matchP && matchR;
+    return !archived && matchQ && matchP && matchR && matchReg;
   });
 
   var counts = {};
@@ -845,6 +981,16 @@ export default function App() {
                 {showArchive ? "← Pipeline" : "Archive"}
               </button>
             </div>
+            <div style={{ display:"flex", gap:6 }}>
+              <select value={filterRegion} onChange={function(e){setFilterRegion(e.target.value);}} style={{...dropSt,flex:1}}>
+                <option value="All">All Regions</option>
+                {regions.map(function(r){ return <option key={r} value={r}>{r}</option>; })}
+              </select>
+              <button onClick={function(){ setShowEditRegions(true); }}
+                style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:MUTED, cursor:"pointer", fontSize:11, flexShrink:0 }}>
+                Regions
+              </button>
+            </div>
           </div>
           <div style={{ flex:1, overflowY:"auto" }}>
             {filtered.length===0
@@ -875,7 +1021,7 @@ export default function App() {
       </div>
 
       {/* Modals */}
-      {showAdd && <AddForm allLeads={leads} onAdd={addLead} onCancel={function(){ setShowAdd(false); }}/>}
+      {showAdd && <AddForm allLeads={leads} regions={regions} onAdd={addLead} onCancel={function(){ setShowAdd(false); }}/>}
       {editLead && editDraft && (
         <EditForm
           lead={editDraft}
@@ -886,6 +1032,7 @@ export default function App() {
           setSyncContact={setSyncContact}
           relatedCount={editRelatedCount}
           allLeads={leads}
+          regions={regions}
         />
       )}
       {callLogLead && (
@@ -902,6 +1049,13 @@ export default function App() {
           allLeads={leads}
           onAdd={addMeetingEntry}
           onClose={function(){ setMeetingLogLead(null); }}
+        />
+      )}
+      {showEditRegions && (
+        <RegionEditModal
+          regions={regions}
+          onSave={saveRegions}
+          onClose={function(){ setShowEditRegions(false); }}
         />
       )}
     </div>
