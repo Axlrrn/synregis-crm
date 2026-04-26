@@ -38,7 +38,7 @@ const BORDER = "#1c3550";
 const INP    = "#091525";
 
 const PIPELINE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence","Won","Lost","On Hold","Unwanted"];
-const DEFAULT_REGIONS = ["North","South","East","West","Center"];
+const DEFAULT_REGIONS = ["North-West","North-Center","North-East","South-West","South-Center","South-East","Center-West","Center-East"];
 const PROJECT_STAGES  = ["Pre-Launch/Off-Plan","Permitting & Planning","Under Construction","Finishing Works","Near Delivery","Delivered & Occupied","Stalled/Suspended"];
 const PRIORITIES      = ["Top Priority","High","Warm","Cold","Inbound Only"];
 
