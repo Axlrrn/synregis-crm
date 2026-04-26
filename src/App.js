@@ -624,7 +624,7 @@ function DetailPanel(props) {
             <a href={"https://maps.google.com/?q="+encodeURIComponent(lead.gpsCoords)}
               target="_blank" rel="noopener noreferrer"
               style={{ fontSize:13, color:GOLD, textDecoration:"none" }}>
-              📍 {lead.gpsCoords}
+              {lead.gpsCoords}
             </a>
           </div>
         )}
