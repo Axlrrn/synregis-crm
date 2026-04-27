@@ -981,7 +981,7 @@ export default function App() {
     var q = search.toLowerCase();
     var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
     var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
-    var matchR   = filterPriority === "All"  || l.priority === filterPriority;
+    var matchR   = filterPriority === "All" || l.priority === filterPriority || l.projectStage === filterPriority;
     var matchReg = filterRegion === "All" || l.region === filterRegion;
     var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
     if (showArchive) return archived && matchQ;
@@ -1163,8 +1163,13 @@ export default function App() {
               style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"7px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
             <div style={{ display:"flex", gap:6 }}>
               <select value={filterPriority} onChange={function(e){setFilterPriority(e.target.value);}} style={dropSt}>
-                <option value="All">All Priorities</option>
-                {PRIORITIES.map(function(p){ return <option key={p} value={p}>{p}</option>; })}
+                <option value="All">All</option>
+                <optgroup label="Priority">
+                  {PRIORITIES.map(function(p){ return <option key={p} value={p}>{p}</option>; })}
+                </optgroup>
+                <optgroup label="Construction Stage">
+                  {PROJECT_STAGES.map(function(s){ return <option key={s} value={s}>{s}</option>; })}
+                </optgroup>
               </select>
               <button onClick={function(){ setShowAdd(true); }}
                 style={{ padding:"7px 12px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
