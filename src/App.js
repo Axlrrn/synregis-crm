@@ -11,6 +11,7 @@ import {
   arrayUnion,
   setDoc,
   getDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
@@ -571,6 +572,7 @@ function PhoneMatchInfo(props) {
 function DetailPanel(props) {
   var lead = props.lead;
   var allLeads = props.allLeads;
+  var [deleteStep, setDeleteStep] = useState(0);
   if (!lead) return (
     <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>
       Select a project to view details
@@ -605,6 +607,25 @@ function DetailPanel(props) {
             style={{ padding:"6px 14px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:12, fontWeight:700 }}>
             Edit
           </button>
+          {deleteStep === 0 && (
+            <button onClick={function(){ setDeleteStep(1); }}
+              style={{ padding:"6px 12px", borderRadius:6, border:"1px solid #ef444466", background:"transparent", color:"#ef4444", cursor:"pointer", fontSize:12 }}>
+              Delete
+            </button>
+          )}
+          {deleteStep === 1 && (
+            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+              <span style={{ fontSize:11, color:"#ef4444" }}>Sure?</span>
+              <button onClick={function(){ props.onDelete(lead.id); }}
+                style={{ padding:"6px 12px", borderRadius:6, border:"none", background:"#ef4444", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
+                Yes, Delete
+              </button>
+              <button onClick={function(){ setDeleteStep(0); }}
+                style={{ padding:"6px 10px", borderRadius:6, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:12 }}>
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -828,6 +849,11 @@ export default function App() {
     setSyncContact(false);
   }
 
+  async function deleteLead(id) {
+    await deleteDoc(doc(db, "leads", String(id)));
+    setSelected(null);
+  }
+
   async function saveEdit() {
     var draft = editDraft;
     try {
@@ -1013,7 +1039,7 @@ export default function App() {
                 <div style={{padding:"10px 16px", borderBottom:"1px solid "+BORDER, flexShrink:0}}>
                   <button onClick={function(){ setSelected(null); }} style={{padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13}}>← Back</button>
                 </div>
-                <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onMeetingLog={setMeetingLogLead} onSelect={function(r){ setSelected(r); }}/>
+                <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onMeetingLog={setMeetingLogLead} onSelect={function(r){ setSelected(r); }} onDelete={deleteLead}/>
               </div>
             : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
           }
