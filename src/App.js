@@ -13,7 +13,7 @@ import {
   getDoc,
   deleteDoc,
 } from "firebase/firestore";
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -257,26 +257,49 @@ function AttachmentsSection(props) {
   var lead = props.lead;
   var attachments = lead.attachments || [];
   var fileRef = useRef(null);
-  var [uploading, setUploading] = useState(false);
-  async function handleFile(e) {
+  var [uploadState, setUploadState] = useState(null);
+
+  function handleFile(e) {
     var file = e.target.files && e.target.files[0];
     if (!file) return;
-    setUploading(true);
-    try {
-      var path = "attachments/" + String(lead.id) + "/" + Date.now() + "_" + file.name;
-      var sRef = storageRef(storage, path);
-      await uploadBytes(sRef, file);
-      var url = await getDownloadURL(sRef);
-      var meta = { name: file.name, url: url, uploadedAt: new Date().toISOString().split("T")[0] };
-      await updateDoc(doc(db, "leads", String(lead.id)), { attachments: arrayUnion(meta) });
-    } catch(err) { alert("Upload failed: " + err.message); }
-    setUploading(false);
-    e.target.value = "";
+    var sizeMB = (file.size / 1024 / 1024).toFixed(1);
+    setUploadState({ stage:"reading", pct:0, fileName:file.name, sizeMB:sizeMB });
+    var path = "attachments/" + String(lead.id) + "/" + Date.now() + "_" + file.name;
+    var sRef = storageRef(storage, path);
+    var task = uploadBytesResumable(sRef, file);
+    task.on("state_changed",
+      function(snap) {
+        var pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
+        setUploadState({ stage:"uploading", pct:pct, fileName:file.name, sizeMB:sizeMB });
+      },
+      function(err) {
+        alert("Upload failed: " + err.message);
+        setUploadState(null);
+        e.target.value = "";
+      },
+      async function() {
+        setUploadState({ stage:"saving", pct:100, fileName:file.name, sizeMB:sizeMB });
+        try {
+          var url = await getDownloadURL(task.snapshot.ref);
+          var meta = { name: file.name, url: url, uploadedAt: new Date().toISOString().split("T")[0] };
+          await updateDoc(doc(db, "leads", String(lead.id)), { attachments: arrayUnion(meta) });
+        } catch(err2) { alert("Save failed: " + err2.message); }
+        setUploadState(null);
+        e.target.value = "";
+      }
+    );
   }
+
+  var stageLabel = uploadState
+    ? uploadState.stage === "reading"   ? "Reading file..."
+    : uploadState.stage === "uploading" ? "Uploading " + uploadState.pct + "%"
+    : uploadState.stage === "saving"    ? "Saving..."
+    : "" : "";
+
   return (
     <div style={{ marginTop:8 }}>
       <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:600, marginBottom:8 }}>Attachments</div>
-      {attachments.length === 0 && <div style={{ fontSize:12, color:MUTED, marginBottom:8 }}>No attachments yet.</div>}
+      {attachments.length === 0 && !uploadState && <div style={{ fontSize:12, color:MUTED, marginBottom:8 }}>No attachments yet.</div>}
       {attachments.map(function(a, i) {
         return (
           <div key={i} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, padding:"6px 10px", background:CARD2, borderRadius:6, border:"1px solid "+BORDER }}>
@@ -290,11 +313,23 @@ function AttachmentsSection(props) {
           </div>
         );
       })}
+      {uploadState && (
+        <div style={{ marginBottom:8, padding:"8px 10px", background:CARD2, borderRadius:6, border:"1px solid "+BORDER }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+            <span style={{ fontSize:12, color:CREAM, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>{uploadState.fileName}</span>
+            <span style={{ fontSize:11, color:MUTED, marginLeft:8, flexShrink:0 }}>{uploadState.sizeMB} MB</span>
+          </div>
+          <div style={{ height:4, background:BORDER, borderRadius:2, overflow:"hidden", marginBottom:5 }}>
+            <div style={{ height:"100%", width:uploadState.pct+"%", background:GOLD, borderRadius:2, transition:"width 0.3s" }}/>
+          </div>
+          <div style={{ fontSize:11, color:GOLD }}>{stageLabel}</div>
+        </div>
+      )}
       <input ref={fileRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={handleFile}/>
-      <button disabled={uploading} onClick={function(){ fileRef.current && fileRef.current.click(); }}
+      <button disabled={!!uploadState} onClick={function(){ fileRef.current && fileRef.current.click(); }}
         style={{ padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent",
-          color:GOLD, cursor:"pointer", fontSize:12, opacity:uploading?0.5:1 }}>
-        {uploading ? "Uploading..." : "+ Attach PDF"}
+          color:GOLD, cursor:"pointer", fontSize:12, opacity:uploadState?0.5:1 }}>
+        + Attach PDF
       </button>
     </div>
   );
