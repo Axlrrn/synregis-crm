@@ -53,6 +53,16 @@ const PRC = {
 
 const LOGO_SRC = "/logo.png";
 
+// ── Settings helpers ──────────────────────────────────────────────────────────
+var DEFAULT_SETTINGS = { badge: true, banner: true, browserNotif: false, phoneNotif: false, notifTime: "09:00" };
+function loadSettings() {
+  try { return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("synregis_settings") || "{}")); }
+  catch(e) { return Object.assign({}, DEFAULT_SETTINGS); }
+}
+function saveSettingsLS(s) {
+  try { localStorage.setItem("synregis_settings", JSON.stringify(s)); } catch(e) {}
+}
+
 // ── Phone matching helpers ────────────────────────────────────────────────────
 function normalizePhone(str) {
   if (!str) return "";
@@ -727,20 +737,101 @@ function DetailPanel(props) {
   );
 }
 
+function ToggleRow(props) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderBottom:"1px solid #1c355044" }}>
+      <div style={{ flex:1, paddingRight:16 }}>
+        <div style={{ fontSize:13, color:CREAM, fontWeight:500 }}>{props.label}</div>
+        <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>{props.sub}</div>
+      </div>
+      <div onClick={props.onChange}
+        style={{ width:44, height:24, borderRadius:12, background: props.checked ? GOLD : BORDER,
+          cursor:"pointer", position:"relative", flexShrink:0, transition:"background 0.2s" }}>
+        <div style={{ position:"absolute", top:3, left: props.checked ? 23 : 3,
+          width:18, height:18, borderRadius:9, background:"#fff", transition:"left 0.2s" }}/>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal(props) {
+  var s = props.settings;
+  function set(key, val) { props.onChange(Object.assign({}, s, { [key]: val })); }
+  function toggle(key) { set(key, !s[key]); }
+  var ovl = { position:"fixed", inset:0, background:"#000000aa", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" };
+  var box = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, padding:28, width:360, maxWidth:"92vw", maxHeight:"90vh", overflowY:"auto" };
+  function requestAndToggle(key) {
+    if (s[key]) { toggle(key); return; }
+    if (!("Notification" in window)) { alert("Notifications are not supported in this browser."); return; }
+    Notification.requestPermission().then(function(p) {
+      if (p === "granted") { toggle(key); }
+      else { alert("Please allow notifications in your browser settings first."); }
+    });
+  }
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget) props.onClose(); }}>
+      <div style={box}>
+        <div style={{ fontSize:16, fontWeight:700, color:GOLD, marginBottom:20 }}>Settings</div>
+        <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:4 }}>
+          Follow-Up Alerts
+        </div>
+        <ToggleRow label="Badge on lead rows" sub="Red/orange tag on leads with overdue or due-today follow-ups"
+          checked={s.badge} onChange={function(){ toggle("badge"); }}/>
+        <ToggleRow label="Due Today banner" sub="Summary strip at top of the leads list"
+          checked={s.banner} onChange={function(){ toggle("banner"); }}/>
+        <ToggleRow label="Browser notifications" sub="Desktop popup when you open the CRM (if follow-ups are due)"
+          checked={s.browserNotif} onChange={function(){ requestAndToggle("browserNotif"); }}/>
+        <ToggleRow label="Phone notifications" sub="Push alert on your phone - add this app to home screen first on iOS"
+          checked={s.phoneNotif} onChange={function(){ requestAndToggle("phoneNotif"); }}/>
+        {(s.browserNotif || s.phoneNotif) && (
+          <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12, padding:"10px 0" }}>
+            <span style={{ fontSize:13, color:CREAM }}>Notify at</span>
+            <input type="time" value={s.notifTime}
+              onChange={function(e){ set("notifTime", e.target.value); }}
+              style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
+            <span style={{ fontSize:11, color:MUTED }}>daily</span>
+          </div>
+        )}
+        <div style={{ fontSize:11, color:MUTED, marginTop:16, lineHeight:1.6, borderTop:"1px solid "+BORDER, paddingTop:12 }}>
+          Phone notifications require browser notification permission. On iPhone, open this app in Safari, tap Share, then "Add to Home Screen", then reopen from your home screen.
+        </div>
+        <button onClick={props.onClose}
+          style={{ marginTop:20, width:"100%", padding:"9px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function LeadRow(props) {
   var lead = props.lead;
   var sel = props.selected;
+  var today = new Date().toISOString().split("T")[0];
+  var fu = lead.nextFollowUp;
+  var isOverdue = fu && fu < today;
+  var isDueToday = fu && fu === today;
+  var showBadge = props.settings && props.settings.badge && (isOverdue || isDueToday);
+  var badgeColor = isOverdue ? "#ef4444" : "#f59e0b";
+  var badgeLabel = isOverdue ? "Overdue" : "Today";
   return (
     <div onClick={function(){ props.onSelect(lead); }}
       style={{
         padding:"12px 14px", cursor:"pointer", borderBottom:"1px solid "+BORDER,
         background: sel ? CARD2 : "transparent",
-        borderLeft: sel ? "3px solid "+GOLD : "3px solid transparent"
+        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : "transparent")
       }}
       onMouseEnter={function(e){ if(!sel) e.currentTarget.style.background=CARD2+"88"; }}
       onMouseLeave={function(e){ if(!sel) e.currentTarget.style.background="transparent"; }}>
-      <div style={{ fontWeight:600, fontSize:13, color:CREAM, marginBottom:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-        {lead.projectName}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+        <div style={{ fontWeight:600, fontSize:13, color:CREAM, marginBottom:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", flex:1 }}>
+          {lead.projectName}
+        </div>
+        {showBadge && (
+          <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#fff", background:badgeColor, borderRadius:4, padding:"1px 5px" }}>
+            {badgeLabel}
+          </span>
+        )}
       </div>
       <div style={{ fontSize:11, color:MUTED, marginBottom:5, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
         {lead.promoteur} - {lead.location}
@@ -771,6 +862,8 @@ export default function App() {
   var [filterRegion, setFilterRegion]     = useState("All");
   var [regions, setRegions]               = useState(DEFAULT_REGIONS);
   var [showEditRegions, setShowEditRegions] = useState(false);
+  var [showSettings, setShowSettings]     = useState(false);
+  var [settings, setSettings]             = useState(loadSettings);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
   useEffect(function() {
@@ -810,6 +903,37 @@ export default function App() {
     }
     loadRegions();
   }, []);
+
+  // ── Settings persistence ───────────────────────────────────────────────────
+  useEffect(function() { saveSettingsLS(settings); }, [settings]);
+
+  // ── Follow-up notifications ────────────────────────────────────────────────
+  useEffect(function() {
+    if (!settings.browserNotif && !settings.phoneNotif) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    if (!leads.length) return;
+    var today = new Date().toISOString().split("T")[0];
+    var lastNotif = "";
+    try { lastNotif = localStorage.getItem("synregis_last_notif") || ""; } catch(e) {}
+    if (lastNotif === today) return;
+    var now = new Date();
+    var parts = (settings.notifTime || "09:00").split(":");
+    var h = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10);
+    if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return;
+    var due = leads.filter(function(l) {
+      return l.nextFollowUp && l.nextFollowUp <= today && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted";
+    });
+    if (due.length > 0) {
+      try {
+        new Notification("SynRegis Follow-Up", {
+          body: due.length + " project" + (due.length > 1 ? "s need" : " needs") + " follow-up today",
+          icon: "/logo.png"
+        });
+        localStorage.setItem("synregis_last_notif", today);
+      } catch(e) {}
+    }
+  }, [leads, settings]);
 
   async function saveRegions(list) {
     setRegions(list);
@@ -951,16 +1075,25 @@ export default function App() {
       <div style={{ background:"#ffffff", position:"relative", paddingBottom:52, flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 28px 6px" }}>
           <img src={LOGO_SRC} alt="SynRegis" style={{ height:78, width:"auto", objectFit:"contain", display:"block" }}/>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:11, color:"#999", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>
-            <div style={{ fontSize:24, fontWeight:700, color:NAVY, lineHeight:1.1 }}>{leads.length} Projects</div>
-            <div style={{ fontSize:12, color:"#888", marginTop:3 }}>
-              {leads.filter(function(l){return l.pipelineStage==="Won";}).length} Won
-              &nbsp;|&nbsp;
-              {leads.filter(function(l){return l.pipelineStage==="Negotiation";}).length} Negotiation
-              &nbsp;|&nbsp;
-              {leads.filter(function(l){return l.pipelineStage==="Prospecting";}).length} Prospecting
+          <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:11, color:"#999", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>
+              <div style={{ fontSize:24, fontWeight:700, color:NAVY, lineHeight:1.1 }}>{leads.length} Projects</div>
+              <div style={{ fontSize:12, color:"#888", marginTop:3 }}>
+                {leads.filter(function(l){return l.pipelineStage==="Won";}).length} Won
+                &nbsp;|&nbsp;
+                {leads.filter(function(l){return l.pipelineStage==="Negotiation";}).length} Negotiation
+                &nbsp;|&nbsp;
+                {leads.filter(function(l){return l.pipelineStage==="Prospecting";}).length} Prospecting
+              </div>
             </div>
+            <button onClick={function(){ setShowSettings(true); }} title="Settings"
+              style={{ marginTop:4, background:"transparent", border:"1px solid #ccc", borderRadius:8, cursor:"pointer", padding:"7px 9px", color:NAVY, display:"flex", alignItems:"center" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
           </div>
         </div>
         <svg viewBox="0 0 1440 56" preserveAspectRatio="none"
@@ -1019,10 +1152,29 @@ export default function App() {
             </div>
           </div>
           <div style={{ flex:1, overflowY:"auto" }}>
+            {(function(){
+              var today = new Date().toISOString().split("T")[0];
+              var dueLeads = leads.filter(function(l){ return l.nextFollowUp && l.nextFollowUp <= today && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted"; });
+              return settings.banner && dueLeads.length > 0 && (
+                <div style={{ margin:"8px 10px 4px", padding:"8px 12px", borderRadius:8, background:"#ef444422", border:"1px solid #ef444466" }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#ef4444", marginBottom:4 }}>FOLLOW-UPS DUE</div>
+                  {dueLeads.map(function(l){
+                    var overdue = l.nextFollowUp < today;
+                    return (
+                      <div key={l.id} onClick={function(){ setSelected(l); }}
+                        style={{ fontSize:12, color:CREAM, cursor:"pointer", padding:"2px 0", display:"flex", justifyContent:"space-between" }}>
+                        <span>{l.projectName}</span>
+                        <span style={{ color: overdue ? "#ef4444" : "#f59e0b", fontSize:11 }}>{overdue ? "Overdue" : "Today"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
             {filtered.length===0
               ? <div style={{ padding:20, color:MUTED, fontSize:13, textAlign:"center" }}>No results</div>
               : filtered.map(function(l){
-                  return <LeadRow key={l.id} lead={l} selected={selFull&&selFull.id===l.id} onSelect={function(x){ setSelected(x); }}/>;
+                  return <LeadRow key={l.id} lead={l} settings={settings} selected={selFull&&selFull.id===l.id} onSelect={function(x){ setSelected(x); }}/>;
                 })
             }
           </div>
@@ -1082,6 +1234,13 @@ export default function App() {
           regions={regions}
           onSave={saveRegions}
           onClose={function(){ setShowEditRegions(false); }}
+        />
+      )}
+      {showSettings && (
+        <SettingsModal
+          settings={settings}
+          onChange={function(s){ setSettings(s); }}
+          onClose={function(){ setShowSettings(false); }}
         />
       )}
     </div>
