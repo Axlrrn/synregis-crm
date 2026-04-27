@@ -421,7 +421,7 @@ function EditForm(props) {
           <Fld label="Amenities" value={lead.amenities} onChange={f("amenities")} type="textarea"/>
           <Fld label="Project Stage" value={lead.projectStage} onChange={f("projectStage")} type="select" options={PROJECT_STAGES}/>
           <Fld label="Pipeline Stage" value={lead.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
-          <Fld label="Priority" value={lead.priority} onChange={f("priority")} type="select" options={PRIORITIES}/>
+          <Fld label="Priority" value={lead.priority||""} onChange={f("priority")} type="select" options={[""].concat(PRIORITIES)}/>
           <Fld label="Next Follow-Up" value={lead.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
           <Fld label="Region" value={lead.region||""} onChange={f("region")} type="select" options={[""].concat(props.regions||DEFAULT_REGIONS)}/>
           <Fld label="GPS Coordinates" value={lead.gpsCoords||""} onChange={f("gpsCoords")}/>
@@ -468,7 +468,7 @@ function AddForm(props) {
           <Fld label="Amenities" value={form.amenities} onChange={f("amenities")} type="textarea"/>
           <Fld label="Project Stage" value={form.projectStage} onChange={f("projectStage")} type="select" options={PROJECT_STAGES}/>
           <Fld label="Pipeline Stage" value={form.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
-          <Fld label="Priority" value={form.priority} onChange={f("priority")} type="select" options={PRIORITIES}/>
+          <Fld label="Priority" value={form.priority||""} onChange={f("priority")} type="select" options={[""].concat(PRIORITIES)}/>
           <Fld label="Next Follow-Up" value={form.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
           <Fld label="Region" value={form.region||""} onChange={f("region")} type="select" options={[""].concat(props.regions||DEFAULT_REGIONS)}/>
           <Fld label="GPS Coordinates" value={form.gpsCoords||""} onChange={f("gpsCoords")}/>
