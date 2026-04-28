@@ -880,6 +880,32 @@ function LeadRow(props) {
 }
 
 // ── Main App ──────────────────────────────────────────────────────────────────
+// ── Splash Screen ─────────────────────────────────────────────────────────────
+function SplashScreen({ visible }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "#ffffff",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      gap: 20,
+      opacity: visible ? 1 : 0,
+      transition: "opacity 0.7s ease",
+      pointerEvents: visible ? "all" : "none",
+    }}>
+      <img
+        src="/logo.png"
+        alt="SynRegis"
+        style={{
+          width: "85vw",
+          maxWidth: 400,
+          objectFit: "contain",
+        }}
+      />
+    </div>
+  );
+}
+
 export default function App() {
   var [leads, setLeads]               = useState([]);
   var [loading, setLoading]           = useState(true);
@@ -900,6 +926,13 @@ export default function App() {
   var [showSettings, setShowSettings]     = useState(false);
   var [settings, setSettings]             = useState(loadSettings);
   var [installPrompt, setInstallPrompt]   = useState(null);
+  var [showSplash, setShowSplash]         = useState(true);
+
+  // ── Splash: dismiss after 2.5 s ───────────────────────────────────────────
+  useEffect(function() {
+    var t = setTimeout(function() { setShowSplash(false); }, 2500);
+    return function() { clearTimeout(t); };
+  }, []);
 
   // ── PWA install prompt ────────────────────────────────────────────────────
   useEffect(function() {
@@ -1112,7 +1145,9 @@ export default function App() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
+    <>
+      <SplashScreen visible={showSplash} />
+      <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
 
       {/* Header */}
       <div style={{ background:"#ffffff", position:"relative", paddingBottom:52, flexShrink:0 }}>
@@ -1305,5 +1340,6 @@ export default function App() {
         />
       )}
     </div>
+    </>
   );
 }
