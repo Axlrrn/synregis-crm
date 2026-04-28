@@ -1,6 +1,7 @@
 {
   "short_name": "SynRegis",
   "name": "SynRegis CRM",
+  "description": "SynRegis — Gestion de projets immobiliers",
   "icons": [
     {
       "src": "favicon.ico",
@@ -10,16 +11,26 @@
     {
       "src": "logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "logo512_maskable.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "orientation": "portrait",
+  "theme_color": "#08111f",
+  "background_color": "#08111f"
 }
