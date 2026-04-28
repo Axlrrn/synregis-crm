@@ -880,6 +880,47 @@ function LeadRow(props) {
 }
 
 // ── Main App ──────────────────────────────────────────────────────────────────
+// ── Splash Screen ─────────────────────────────────────────────────────────────
+function SplashScreen({ visible }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "#ffffff",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      gap: 24,
+      opacity: visible ? 1 : 0,
+      transition: "opacity 0.7s ease",
+      pointerEvents: visible ? "all" : "none",
+    }}>
+      <img
+        src="/logo.png"
+        alt="SynRegis"
+        style={{
+          width: "72vw",
+          maxWidth: 320,
+          objectFit: "contain",
+          filter: "drop-shadow(0 6px 28px rgba(8,17,31,0.15))",
+        }}
+      />
+      <div style={{
+        fontSize: 22,
+        letterSpacing: "0.22em",
+        color: "#08111f",
+        fontWeight: 700,
+        fontFamily: "Georgia, serif",
+        textTransform: "uppercase",
+      }}>SynRegis</div>
+      <div style={{
+        fontSize: 11,
+        letterSpacing: "0.14em",
+        color: "#6b8aaa",
+        textTransform: "uppercase",
+      }}>Gestion de projets immobiliers</div>
+    </div>
+  );
+}
+
 export default function App() {
   var [leads, setLeads]               = useState([]);
   var [loading, setLoading]           = useState(true);
@@ -899,6 +940,13 @@ export default function App() {
   var [showEditRegions, setShowEditRegions] = useState(false);
   var [showSettings, setShowSettings]     = useState(false);
   var [settings, setSettings]             = useState(loadSettings);
+  var [showSplash, setShowSplash]         = useState(true);
+
+  // ── Splash screen: hide after 2.5 s ───────────────────────────────────────
+  useEffect(function() {
+    var t = setTimeout(function() { setShowSplash(false); }, 2500);
+    return function() { clearTimeout(t); };
+  }, []);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
   useEffect(function() {
@@ -1104,7 +1152,9 @@ export default function App() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
+    <>
+      <SplashScreen visible={showSplash} />
+      <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
 
       {/* Header */}
       <div style={{ background:"#ffffff", position:"relative", paddingBottom:52, flexShrink:0 }}>
@@ -1284,5 +1334,6 @@ export default function App() {
         />
       )}
     </div>
+    </>
   );
 }
