@@ -1,4 +1,4 @@
-const CACHE_NAME = 'synregis-crm-v1';
+const CACHE_NAME = 'synregis-crm-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

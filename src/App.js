@@ -880,47 +880,6 @@ function LeadRow(props) {
 }
 
 // ── Main App ──────────────────────────────────────────────────────────────────
-// ── Splash Screen ─────────────────────────────────────────────────────────────
-function SplashScreen({ visible }) {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 9999,
-      background: "#ffffff",
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      gap: 24,
-      opacity: visible ? 1 : 0,
-      transition: "opacity 0.7s ease",
-      pointerEvents: visible ? "all" : "none",
-    }}>
-      <img
-        src="/logo.png"
-        alt="SynRegis"
-        style={{
-          width: "72vw",
-          maxWidth: 320,
-          objectFit: "contain",
-          filter: "drop-shadow(0 6px 28px rgba(8,17,31,0.15))",
-        }}
-      />
-      <div style={{
-        fontSize: 22,
-        letterSpacing: "0.22em",
-        color: "#08111f",
-        fontWeight: 700,
-        fontFamily: "Georgia, serif",
-        textTransform: "uppercase",
-      }}>SynRegis</div>
-      <div style={{
-        fontSize: 11,
-        letterSpacing: "0.14em",
-        color: "#6b8aaa",
-        textTransform: "uppercase",
-      }}>Gestion de projets immobiliers</div>
-    </div>
-  );
-}
-
 export default function App() {
   var [leads, setLeads]               = useState([]);
   var [loading, setLoading]           = useState(true);
@@ -940,12 +899,13 @@ export default function App() {
   var [showEditRegions, setShowEditRegions] = useState(false);
   var [showSettings, setShowSettings]     = useState(false);
   var [settings, setSettings]             = useState(loadSettings);
-  var [showSplash, setShowSplash]         = useState(true);
+  var [installPrompt, setInstallPrompt]   = useState(null);
 
-  // ── Splash screen: hide after 2.5 s ───────────────────────────────────────
+  // ── PWA install prompt ────────────────────────────────────────────────────
   useEffect(function() {
-    var t = setTimeout(function() { setShowSplash(false); }, 2500);
-    return function() { clearTimeout(t); };
+    function handler(e) { e.preventDefault(); setInstallPrompt(e); }
+    window.addEventListener('beforeinstallprompt', handler);
+    return function() { window.removeEventListener('beforeinstallprompt', handler); };
   }, []);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
@@ -1152,9 +1112,7 @@ export default function App() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <>
-      <SplashScreen visible={showSplash} />
-      <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
+    <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
 
       {/* Header */}
       <div style={{ background:"#ffffff", position:"relative", paddingBottom:52, flexShrink:0 }}>
@@ -1172,6 +1130,19 @@ export default function App() {
                 {leads.filter(function(l){return l.pipelineStage==="Prospecting";}).length} Prospecting
               </div>
             </div>
+            {installPrompt && (
+              <button
+                onClick={function() {
+                  installPrompt.prompt();
+                  installPrompt.userChoice.then(function() { setInstallPrompt(null); });
+                }}
+                title="Install App"
+                style={{ marginTop:4, background:GOLD, border:"none", borderRadius:8, cursor:"pointer",
+                  padding:"7px 12px", color:NAVY, display:"flex", alignItems:"center", gap:5,
+                  fontSize:11, fontWeight:700, letterSpacing:"0.05em" }}>
+                ⬇ Install
+              </button>
+            )}
             <button onClick={function(){ setShowSettings(true); }} title="Settings"
               style={{ marginTop:4, background:"transparent", border:"1px solid #ccc", borderRadius:8, cursor:"pointer", padding:"7px 9px", color:NAVY, display:"flex", alignItems:"center" }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1334,6 +1305,5 @@ export default function App() {
         />
       )}
     </div>
-    </>
   );
 }
