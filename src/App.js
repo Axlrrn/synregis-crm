@@ -1218,7 +1218,7 @@ export default function App() {
               placeholder="Search projects..."
               style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"7px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
             <div style={{ display:"flex", gap:6 }}>
-              <select value={filterPriority} onChange={function(e){setFilterPriority(e.target.value);}} style={dropSt}>
+              <select value={filterPriority} onChange={function(e){setFilterPriority(e.target.value);}} style={{...dropSt, flex:1, minWidth:0}}>
                 <option value="All">All</option>
                 <optgroup label="Priority">
                   {PRIORITIES.map(function(p){ return <option key={p} value={p}>{p}</option>; })}
