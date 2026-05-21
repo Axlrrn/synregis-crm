@@ -14,6 +14,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, browserLocalPersistence, setPersistence } from "firebase/auth";
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -27,6 +28,10 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const db = getFirestore(fbApp);
 const storage = getStorage(fbApp);
+const auth = getAuth(fbApp);
+setPersistence(auth, browserLocalPersistence).catch(function(){});
+const googleProvider = new GoogleAuthProvider();
+const ALLOWED_EMAILS = ["axlrrn@gmail.com"];
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const NAVY   = "#08111f";
@@ -906,7 +911,155 @@ function SplashScreen({ visible }) {
   );
 }
 
-export default function App() {
+// ── Auth + PIN gate ───────────────────────────────────────────────────────────
+function pinHash(pin) {
+  var s = "synregis-salt-v1-" + pin;
+  var h = 0;
+  for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return String(h);
+}
+
+function Gate(props) {
+  var [user, setUser]               = useState(undefined);
+  var [phase, setPhase]             = useState("checking");
+  var [authError, setAuthError]     = useState("");
+  var [pinInput, setPinInput]       = useState("");
+  var [pinNew, setPinNew]           = useState("");
+  var [pinConfirm, setPinConfirm]   = useState("");
+  var [pinError, setPinError]       = useState("");
+
+  useEffect(function() {
+    return onAuthStateChanged(auth, function(u) {
+      setUser(u);
+      if (!u) { setPhase("signin"); return; }
+      if (ALLOWED_EMAILS.indexOf(u.email) === -1) { setPhase("wrongAccount"); return; }
+      var stored = localStorage.getItem("synregis_pin");
+      var sessionOk = sessionStorage.getItem("synregis_pin_unlocked") === "1";
+      if (!stored) setPhase("setPin");
+      else if (sessionOk) setPhase("unlocked");
+      else setPhase("enterPin");
+    });
+  }, []);
+
+  function doSignIn() {
+    setAuthError("");
+    signInWithPopup(auth, googleProvider).catch(function(e){
+      setAuthError(e && e.message ? e.message : String(e));
+    });
+  }
+  function doSignOut() {
+    sessionStorage.removeItem("synregis_pin_unlocked");
+    signOut(auth);
+  }
+  function savePin() {
+    setPinError("");
+    if (!/^\d{4}$/.test(pinNew)) { setPinError("PIN must be 4 digits"); return; }
+    if (pinNew !== pinConfirm) { setPinError("PINs do not match"); return; }
+    localStorage.setItem("synregis_pin", pinHash(pinNew));
+    sessionStorage.setItem("synregis_pin_unlocked", "1");
+    setPinNew(""); setPinConfirm("");
+    setPhase("unlocked");
+  }
+  function tryPin() {
+    setPinError("");
+    if (pinHash(pinInput) === localStorage.getItem("synregis_pin")) {
+      sessionStorage.setItem("synregis_pin_unlocked", "1");
+      setPinInput("");
+      setPhase("unlocked");
+    } else {
+      setPinError("Incorrect PIN");
+      setPinInput("");
+    }
+  }
+  function resetPin() {
+    if (!window.confirm("Reset PIN? You'll set a new one immediately.")) return;
+    localStorage.removeItem("synregis_pin");
+    sessionStorage.removeItem("synregis_pin_unlocked");
+    setPhase("setPin");
+  }
+  function lockNow() {
+    sessionStorage.removeItem("synregis_pin_unlocked");
+    setPhase("enterPin");
+  }
+
+  var wrap = { minHeight: "100vh", background: NAVY, color: CREAM, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "system-ui, -apple-system, sans-serif" };
+  var card = { background: CARD, border: "1px solid " + BORDER, borderRadius: 12, padding: 32, maxWidth: 360, width: "100%", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,0.4)" };
+  var h1   = { color: GOLD, fontSize: 22, fontWeight: 700, margin: "0 0 8px", letterSpacing: 1 };
+  var sub  = { color: MUTED, fontSize: 13, margin: "0 0 24px", lineHeight: 1.5 };
+  var inp  = { width: "100%", boxSizing: "border-box", background: INP, border: "1px solid " + BORDER, borderRadius: 8, padding: "12px 14px", color: CREAM, fontSize: 18, textAlign: "center", letterSpacing: 8, fontFamily: "monospace", marginBottom: 8 };
+  var btn  = { width: "100%", padding: "12px 16px", borderRadius: 8, background: GOLD, color: NAVY, border: "none", fontWeight: 700, cursor: "pointer", fontSize: 14, letterSpacing: 0.5 };
+  var link = { background: "none", border: "none", color: MUTED, cursor: "pointer", marginTop: 14, fontSize: 12, textDecoration: "underline" };
+  var err  = { color: "#ef4444", fontSize: 12, margin: "8px 0 0", minHeight: 16 };
+  var floatBar = { position: "fixed", bottom: 12, right: 12, zIndex: 9999, display: "flex", gap: 6 };
+  var floatBtn = { background: CARD, color: GOLD, border: "1px solid " + BORDER, borderRadius: 999, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontWeight: 600, letterSpacing: 0.5 };
+  var floatBtnMuted = Object.assign({}, floatBtn, { color: MUTED, fontWeight: 500 });
+
+  if (phase === "checking") {
+    return <div style={wrap}><div style={card}><div style={sub}>Loading…</div></div></div>;
+  }
+  if (phase === "signin") {
+    return (
+      <div style={wrap}><div style={card}>
+        <h1 style={h1}>SYNREGIS CRM</h1>
+        <p style={sub}>Sign in to continue.</p>
+        <button style={btn} onClick={doSignIn}>Sign in with Google</button>
+        {authError ? <p style={err}>{authError}</p> : null}
+      </div></div>
+    );
+  }
+  if (phase === "wrongAccount") {
+    return (
+      <div style={wrap}><div style={card}>
+        <h1 style={h1}>NOT AUTHORISED</h1>
+        <p style={sub}>This account ({user && user.email}) is not allowed to access this CRM.</p>
+        <button style={btn} onClick={doSignOut}>Sign out</button>
+      </div></div>
+    );
+  }
+  if (phase === "setPin") {
+    return (
+      <div style={wrap}><div style={card}>
+        <h1 style={h1}>SET YOUR PIN</h1>
+        <p style={sub}>4-digit PIN to unlock the CRM on this device.</p>
+        <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="••••" value={pinNew}
+          onChange={function(e){ setPinNew(e.target.value.replace(/\D/g,"").slice(0,4)); }} autoFocus />
+        <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="confirm" value={pinConfirm}
+          onChange={function(e){ setPinConfirm(e.target.value.replace(/\D/g,"").slice(0,4)); }}
+          onKeyDown={function(e){ if (e.key === "Enter") savePin(); }} />
+        <button style={btn} onClick={savePin}>Save PIN</button>
+        <p style={err}>{pinError}</p>
+        <button style={link} onClick={doSignOut}>Sign out</button>
+      </div></div>
+    );
+  }
+  if (phase === "enterPin") {
+    return (
+      <div style={wrap}><div style={card}>
+        <h1 style={h1}>ENTER YOUR PIN</h1>
+        <p style={sub}>Signed in as {user && user.email}</p>
+        <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="••••" value={pinInput}
+          onChange={function(e){ setPinInput(e.target.value.replace(/\D/g,"").slice(0,4)); }}
+          onKeyDown={function(e){ if (e.key === "Enter" && pinInput.length === 4) tryPin(); }} autoFocus />
+        <button style={btn} onClick={tryPin} disabled={pinInput.length !== 4}>Unlock</button>
+        <p style={err}>{pinError}</p>
+        <button style={link} onClick={resetPin}>Forgot PIN?</button>
+        <br/>
+        <button style={link} onClick={doSignOut}>Sign out</button>
+      </div></div>
+    );
+  }
+  return (
+    <>
+      {props.children}
+      <div style={floatBar}>
+        <button style={floatBtn} onClick={lockNow}>LOCK</button>
+        <button style={floatBtnMuted} onClick={doSignOut}>SIGN OUT</button>
+      </div>
+    </>
+  );
+}
+
+function AppInner() {
   var [leads, setLeads]               = useState([]);
   var [loading, setLoading]           = useState(true);
   var [selected, setSelected]         = useState(null);
@@ -1342,4 +1495,8 @@ export default function App() {
     </div>
     </>
   );
+}
+
+export default function App() {
+  return <Gate><AppInner /></Gate>;
 }
