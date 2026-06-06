@@ -1079,7 +1079,14 @@ function AppInner() {
   var [showSettings, setShowSettings]     = useState(false);
   var [settings, setSettings]             = useState(loadSettings);
   var [installPrompt, setInstallPrompt]   = useState(null);
+  var [showInstallHelp, setShowInstallHelp] = useState(false);
   var [showSplash, setShowSplash]         = useState(true);
+
+  // Already installed? (running as a standalone PWA) — then hide the Install UI.
+  var isStandalone = typeof window !== "undefined" && (
+    (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+    window.navigator.standalone === true
+  );
 
   // ── Splash: dismiss after 2.5 s ───────────────────────────────────────────
   useEffect(function() {
@@ -1088,10 +1095,21 @@ function AppInner() {
   }, []);
 
   // ── PWA install prompt ────────────────────────────────────────────────────
+  // The event may have fired before React mounted (captured in index.html into
+  // window.__deferredInstallPrompt), so seed from there AND keep listening.
   useEffect(function() {
     function handler(e) { e.preventDefault(); setInstallPrompt(e); }
+    function avail() { setInstallPrompt(window.__deferredInstallPrompt); }
+    function installed() { setInstallPrompt(null); }
+    if (window.__deferredInstallPrompt) setInstallPrompt(window.__deferredInstallPrompt);
     window.addEventListener('beforeinstallprompt', handler);
-    return function() { window.removeEventListener('beforeinstallprompt', handler); };
+    window.addEventListener('pwa-install-available', avail);
+    window.addEventListener('appinstalled', installed);
+    return function() {
+      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('pwa-install-available', avail);
+      window.removeEventListener('appinstalled', installed);
+    };
   }, []);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
@@ -1318,18 +1336,44 @@ function AppInner() {
                 {leads.filter(function(l){return l.pipelineStage==="Prospecting";}).length} Prospecting
               </div>
             </div>
-            {installPrompt && (
+            {!isStandalone && (
               <button
                 onClick={function() {
-                  installPrompt.prompt();
-                  installPrompt.userChoice.then(function() { setInstallPrompt(null); });
+                  if (installPrompt) {
+                    installPrompt.prompt();
+                    installPrompt.userChoice.then(function() { setInstallPrompt(null); });
+                  } else {
+                    // Browsers without beforeinstallprompt (Huawei Browser, iOS
+                    // Safari) can't show a programmatic prompt — guide the user.
+                    setShowInstallHelp(true);
+                  }
                 }}
-                title="Install App"
+                title="Installer l'application"
                 style={{ marginTop:4, background:GOLD, border:"none", borderRadius:8, cursor:"pointer",
                   padding:"7px 12px", color:NAVY, display:"flex", alignItems:"center", gap:5,
                   fontSize:11, fontWeight:700, letterSpacing:"0.05em" }}>
-                ⬇ Install
+                ⬇ Installer
               </button>
+            )}
+            {showInstallHelp && (
+              <div onClick={function(){ setShowInstallHelp(false); }}
+                style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:9999,
+                  display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+                <div onClick={function(e){ e.stopPropagation(); }}
+                  style={{ background:"#fff", borderRadius:12, maxWidth:380, width:"100%", padding:20, color:NAVY }}>
+                  <div style={{ fontWeight:800, fontSize:16, marginBottom:10 }}>Installer SynRegis CRM</div>
+                  <div style={{ fontSize:13, lineHeight:1.55, color:"#333" }}>
+                    <p style={{ margin:"6px 0" }}><b>Huawei / Android :</b> ouvrez le menu du navigateur (⋮ ou ≡), puis « Ajouter à l'écran d'accueil » / « Installer l'application ».</p>
+                    <p style={{ margin:"6px 0" }}><b>Chrome (ordinateur) :</b> cliquez l'icône d'installation dans la barre d'adresse, ou menu ⋮ → « Installer SynRegis CRM… ».</p>
+                    <p style={{ margin:"6px 0" }}><b>iPhone / iPad (Safari) :</b> bouton Partager → « Sur l'écran d'accueil ».</p>
+                  </div>
+                  <button onClick={function(){ setShowInstallHelp(false); }}
+                    style={{ marginTop:14, background:GOLD, border:"none", borderRadius:8, cursor:"pointer",
+                      padding:"8px 14px", color:NAVY, fontWeight:700, fontSize:12 }}>
+                    OK
+                  </button>
+                </div>
+              </div>
             )}
             <button onClick={function(){ setShowSettings(true); }} title="Settings"
               style={{ marginTop:4, background:"transparent", border:"1px solid #ccc", borderRadius:8, cursor:"pointer", padding:"7px 9px", color:NAVY, display:"flex", alignItems:"center" }}>

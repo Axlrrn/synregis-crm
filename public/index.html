@@ -16,6 +16,22 @@
     <!-- Web App Manifest -->
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
 
+    <!-- Capture the install prompt as early as possible. CRA injects the React
+         bundle at the end of <body>, so the event can fire before React mounts;
+         stash it here so the in-app Install button never misses it. -->
+    <script>
+      window.__deferredInstallPrompt = null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        window.__deferredInstallPrompt = e;
+        window.dispatchEvent(new Event('pwa-install-available'));
+      });
+      window.addEventListener('appinstalled', function () {
+        window.__deferredInstallPrompt = null;
+        window.dispatchEvent(new Event('pwa-installed'));
+      });
+    </script>
+
     <title>SynRegis CRM</title>
   </head>
   <body>
