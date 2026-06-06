@@ -835,6 +835,21 @@ function SettingsModal(props) {
         <div style={{ fontSize:11, color:MUTED, marginTop:16, lineHeight:1.6, borderTop:"1px solid "+BORDER, paddingTop:12 }}>
           Phone notifications require browser notification permission. On iPhone, open this app in Safari, tap Share, then "Add to Home Screen", then reopen from your home screen.
         </div>
+        {!props.isStandalone && (
+          <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+            <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
+              Application
+            </div>
+            <button onClick={function(){ if (props.onInstall) props.onInstall(); }}
+              style={{ width:"100%", padding:"9px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent",
+                color:GOLD, cursor:"pointer", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+              ⬇ Installer l'application
+            </button>
+            <div style={{ fontSize:11, color:MUTED, marginTop:8, lineHeight:1.5 }}>
+              Sur Huawei / navigateurs sans installation automatique : menu du navigateur (⋮) → « Ajouter à l'écran d'accueil ».
+            </div>
+          </div>
+        )}
         <button onClick={props.onClose}
           style={{ marginTop:20, width:"100%", padding:"9px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
           Done
@@ -1088,6 +1103,17 @@ function AppInner() {
     window.navigator.standalone === true
   );
 
+  // Trigger install: native prompt where supported (Chrome/Edge), otherwise
+  // show manual "Add to Home Screen" steps (Huawei Browser, iOS Safari).
+  function triggerInstall() {
+    if (installPrompt) {
+      installPrompt.prompt();
+      installPrompt.userChoice.then(function() { setInstallPrompt(null); });
+    } else {
+      setShowInstallHelp(true);
+    }
+  }
+
   // ── Splash: dismiss after 2.5 s ───────────────────────────────────────────
   useEffect(function() {
     var t = setTimeout(function() { setShowSplash(false); }, 2500);
@@ -1338,16 +1364,7 @@ function AppInner() {
             </div>
             {!isStandalone && (
               <button
-                onClick={function() {
-                  if (installPrompt) {
-                    installPrompt.prompt();
-                    installPrompt.userChoice.then(function() { setInstallPrompt(null); });
-                  } else {
-                    // Browsers without beforeinstallprompt (Huawei Browser, iOS
-                    // Safari) can't show a programmatic prompt — guide the user.
-                    setShowInstallHelp(true);
-                  }
-                }}
+                onClick={triggerInstall}
                 title="Installer l'application"
                 style={{ marginTop:4, background:GOLD, border:"none", borderRadius:8, cursor:"pointer",
                   padding:"7px 12px", color:NAVY, display:"flex", alignItems:"center", gap:5,
@@ -1534,6 +1551,8 @@ function AppInner() {
           settings={settings}
           onChange={function(s){ setSettings(s); }}
           onClose={function(){ setShowSettings(false); }}
+          isStandalone={isStandalone}
+          onInstall={triggerInstall}
         />
       )}
     </div>
