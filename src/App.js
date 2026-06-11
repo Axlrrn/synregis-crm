@@ -56,7 +56,9 @@ const PRC = {
   "Top Priority":"#ef4444","High":"#f59e0b","Warm":"#f97316","Cold":"#6b8aaa","Inbound Only":"#3b82f6",
 };
 
-const LOGO_SRC = "/logo.png";
+// Opaque white background baked in: force-dark browsers (Huawei dark mode)
+// darken the white header/splash but leave image pixels alone.
+const LOGO_SRC = "/logo_splash.png";
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
 var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, phoneNotif: false, notifTime: "09:00" };
