@@ -981,7 +981,7 @@ function SplashScreen({ visible }) {
       pointerEvents: visible ? "all" : "none",
     }}>
       <img
-        src="/logo.png"
+        src="/logo_splash.png"
         alt="SynRegis"
         style={{
           width: "85vw",
@@ -1083,6 +1083,8 @@ function AppInner() {
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
   var isMobile = useIsMobile();
+  var backArmed = useRef(false);
+  var layersRef = useRef([]);
 
   // Already installed? (running as a standalone PWA) — then hide the Install UI.
   var isStandalone = typeof window !== "undefined" && (
@@ -1217,6 +1219,43 @@ function AppInner() {
       });
     }).catch(function(){});
   }, [leads, settings]);
+
+  // ── System back button: close the top layer instead of quitting the app ──
+  // While any modal or the detail view is open, keep one sentinel entry in the
+  // history. Back pops the sentinel → we close the top-most layer and re-arm
+  // if layers remain. Closing everything via the UI consumes the sentinel.
+  var layers = [];
+  if (showInstallHelp)  layers.push(function(){ setShowInstallHelp(false); });
+  if (showSettings)     layers.push(function(){ setShowSettings(false); });
+  if (showEditRegions)  layers.push(function(){ setShowEditRegions(false); });
+  if (callLogLead)      layers.push(function(){ setCallLogLead(null); });
+  if (meetingLogLead)   layers.push(function(){ setMeetingLogLead(null); });
+  if (editLead)         layers.push(function(){ setEditLead(null); setEditDraft(null); setSyncContact(false); });
+  if (showAdd)          layers.push(function(){ setShowAdd(false); });
+  if (selected)         layers.push(function(){ setSelected(null); });
+  layersRef.current = layers;
+
+  useEffect(function() {
+    var anyOpen = layersRef.current.length > 0;
+    if (anyOpen && !backArmed.current) {
+      window.history.pushState({ synregisLayer: true }, "");
+      backArmed.current = true;
+    } else if (!anyOpen && backArmed.current) {
+      backArmed.current = false;
+      window.history.back();
+    }
+  });
+
+  useEffect(function() {
+    function onPop() {
+      if (layersRef.current.length > 0) {
+        backArmed.current = false;
+        layersRef.current[0]();
+      }
+    }
+    window.addEventListener("popstate", onPop);
+    return function(){ window.removeEventListener("popstate", onPop); };
+  }, []);
 
   async function saveRegions(list) {
     setRegions(list);
@@ -1372,16 +1411,6 @@ function AppInner() {
                 {leads.filter(function(l){return l.pipelineStage==="Prospecting";}).length} Prospecting
               </div>
             </div>
-            {!isStandalone && (
-              <button
-                onClick={triggerInstall}
-                title="Installer l'application"
-                style={{ marginTop:4, background:GOLD, border:"none", borderRadius:8, cursor:"pointer",
-                  padding:"7px 12px", color:NAVY, display:"flex", alignItems:"center", gap:5,
-                  fontSize:11, fontWeight:700, letterSpacing:"0.05em" }}>
-                ⬇ Installer
-              </button>
-            )}
             {showInstallHelp && (
               <div onClick={function(){ setShowInstallHelp(false); }}
                 style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:9999,

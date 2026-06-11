@@ -1,5 +1,12 @@
+/* The app manages its own dark palette — opt out of browser force-dark
+   (Huawei/Chrome dark mode inverted the white splash to black). */
+:root {
+  color-scheme: only light;
+}
+
 body {
   margin: 0;
+  background: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
