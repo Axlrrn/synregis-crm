@@ -59,13 +59,57 @@ const PRC = {
 const LOGO_SRC = "/logo.png";
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
-var DEFAULT_SETTINGS = { badge: true, banner: true, browserNotif: false, phoneNotif: false, notifTime: "09:00" };
+var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, phoneNotif: false, notifTime: "09:00" };
 function loadSettings() {
   try { return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("synregis_settings") || "{}")); }
   catch(e) { return Object.assign({}, DEFAULT_SETTINGS); }
 }
 function saveSettingsLS(s) {
   try { localStorage.setItem("synregis_settings", JSON.stringify(s)); } catch(e) {}
+}
+
+// ── Activity / staleness helpers ──────────────────────────────────────────────
+var STALE_DAYS = 14;
+var ACTIVE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence"];
+function lastActivityDate(lead) {
+  var dates = [];
+  if (lead.createdAt) dates.push(lead.createdAt);
+  (lead.callLog || []).forEach(function(e){ if (e.date) dates.push(e.date); });
+  (lead.meetingLog || []).forEach(function(e){ if (e.date) dates.push(e.date); });
+  if (!dates.length) return "";
+  dates.sort();
+  return dates[dates.length - 1];
+}
+function daysSince(dateStr) {
+  if (!dateStr) return null;
+  var d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d.getTime())) return null;
+  var diff = Math.floor((Date.now() - d.getTime()) / 86400000);
+  return diff < 0 ? 0 : diff;
+}
+// Days of silence on an active-pipeline lead, or null if not stale.
+function staleDays(lead) {
+  if (ACTIVE_STAGES.indexOf(lead.pipelineStage) === -1) return null;
+  var d = daysSince(lastActivityDate(lead));
+  return d !== null && d >= STALE_DAYS ? d : null;
+}
+
+// ── Responsive helper ─────────────────────────────────────────────────────────
+function useIsMobile() {
+  var [mobile, setMobile] = useState(function(){
+    return typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+  });
+  useEffect(function() {
+    var mq = window.matchMedia("(max-width: 640px)");
+    function onChange(e){ setMobile(e.matches); }
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else mq.addListener(onChange);
+    return function(){
+      if (mq.removeEventListener) mq.removeEventListener("change", onChange);
+      else mq.removeListener(onChange);
+    };
+  }, []);
+  return mobile;
 }
 
 // ── Phone matching helpers ────────────────────────────────────────────────────
@@ -446,7 +490,7 @@ function AddForm(props) {
     projectName:"", location:"", promoteur:"", promoteurKey:"", promoteurFull:"",
     contactName:"", phone:"", units:"", unitDetails:"", amenities:"",
     projectStage:PROJECT_STAGES[0], pipelineStage:PIPELINE_STAGES[0],
-    priority:PRIORITIES[2], notes:"", callLog:[], nextFollowUp:"", createdAt:"",
+    priority:"", notes:"", callLog:[], nextFollowUp:"", createdAt:"",
     region:"", gpsCoords:"", attachments:[]
   };
   var [form, setForm] = useState(blank);
@@ -636,7 +680,7 @@ function DetailPanel(props) {
   var val = { fontSize:13, color:CREAM };
   return (
     <div style={{ flex:1, overflowY:"auto", padding:"20px 20px 40px" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontSize:18, fontWeight:700, color:CREAM, marginBottom:6 }}>{lead.projectName}</div>
           <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
@@ -644,7 +688,7 @@ function DetailPanel(props) {
             <Badge label={lead.priority} bg={PRC[lead.priority]||MUTED}/>
           </div>
         </div>
-        <div style={{ display:"flex", gap:8 }}>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <button onClick={function(){ props.onCallLog(lead); }}
             style={{ padding:"6px 12px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:12 }}>
             + Call Log
@@ -700,6 +744,20 @@ function DetailPanel(props) {
           </div>
         )}
         {lead.nextFollowUp && (<div style={sec}><div style={lbl}>Next Follow-Up</div><div style={val}>{lead.nextFollowUp}</div></div>)}
+        {(function(){
+          var last = lastActivityDate(lead);
+          var d = daysSince(last);
+          var stale = staleDays(lead);
+          return (
+            <div style={sec}>
+              <div style={lbl}>Last Activity</div>
+              <div style={{ ...val, color: stale !== null ? "#f59e0b" : CREAM }}>
+                {last ? last + " (" + (d === 0 ? "today" : d + "d ago") + ")" : "-"}
+                {stale !== null ? " — going quiet" : ""}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {lead.unitDetails && (
@@ -819,9 +877,11 @@ function SettingsModal(props) {
           checked={s.badge} onChange={function(){ toggle("badge"); }}/>
         <ToggleRow label="Due Today banner" sub="Summary strip at top of the leads list"
           checked={s.banner} onChange={function(){ toggle("banner"); }}/>
+        <ToggleRow label="Stale lead alerts" sub={"Amber tag on active leads with no call or meeting logged for " + STALE_DAYS + "+ days"}
+          checked={s.stale} onChange={function(){ toggle("stale"); }}/>
         <ToggleRow label="Browser notifications" sub="Desktop popup when you open the CRM (if follow-ups are due)"
           checked={s.browserNotif} onChange={function(){ requestAndToggle("browserNotif"); }}/>
-        <ToggleRow label="Phone notifications" sub="Push alert on your phone - add this app to home screen first on iOS"
+        <ToggleRow label="Phone notifications" sub="Daily reminder at the set time, even with the app closed (installed app, Android/Chrome)"
           checked={s.phoneNotif} onChange={function(){ requestAndToggle("phoneNotif"); }}/>
         {(s.browserNotif || s.phoneNotif) && (
           <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12, padding:"10px 0" }}>
@@ -846,7 +906,7 @@ function SettingsModal(props) {
               ⬇ Installer l'application
             </button>
             <div style={{ fontSize:11, color:MUTED, marginTop:8, lineHeight:1.5 }}>
-              Sur Huawei / navigateurs sans installation automatique : menu du navigateur (⋮) → « Ajouter à l'écran d'accueil ».
+              Sur Huawei : ouvrez ce site dans le Navigateur Huawei (pas Chrome), menu (⋮) → « Ajouter à l'écran d'accueil » pour une vraie app plein écran sans logo de navigateur.
             </div>
           </div>
         )}
@@ -869,12 +929,14 @@ function LeadRow(props) {
   var showBadge = props.settings && props.settings.badge && (isOverdue || isDueToday);
   var badgeColor = isOverdue ? "#ef4444" : "#f59e0b";
   var badgeLabel = isOverdue ? "Overdue" : "Today";
+  var stale = props.settings && props.settings.stale ? staleDays(lead) : null;
+  var showStale = !showBadge && stale !== null;
   return (
     <div onClick={function(){ props.onSelect(lead); }}
       style={{
         padding:"12px 14px", cursor:"pointer", borderBottom:"1px solid "+BORDER,
         background: sel ? CARD2 : "transparent",
-        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : "transparent")
+        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : showStale ? "#f59e0b88" : "transparent")
       }}
       onMouseEnter={function(e){ if(!sel) e.currentTarget.style.background=CARD2+"88"; }}
       onMouseLeave={function(e){ if(!sel) e.currentTarget.style.background="transparent"; }}>
@@ -885,6 +947,11 @@ function LeadRow(props) {
         {showBadge && (
           <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#fff", background:badgeColor, borderRadius:4, padding:"1px 5px" }}>
             {badgeLabel}
+          </span>
+        )}
+        {showStale && (
+          <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#f59e0b", background:"#f59e0b22", border:"1px solid #f59e0b55", borderRadius:4, padding:"0px 5px" }}>
+            Quiet {stale}d
           </span>
         )}
       </div>
@@ -926,33 +993,18 @@ function SplashScreen({ visible }) {
   );
 }
 
-// ── Auth + PIN gate ───────────────────────────────────────────────────────────
-function pinHash(pin) {
-  var s = "synregis-salt-v1-" + pin;
-  var h = 0;
-  for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return String(h);
-}
-
+// ── Auth gate ─────────────────────────────────────────────────────────────────
 function Gate(props) {
   var [user, setUser]               = useState(undefined);
   var [phase, setPhase]             = useState("checking");
   var [authError, setAuthError]     = useState("");
-  var [pinInput, setPinInput]       = useState("");
-  var [pinNew, setPinNew]           = useState("");
-  var [pinConfirm, setPinConfirm]   = useState("");
-  var [pinError, setPinError]       = useState("");
 
   useEffect(function() {
     return onAuthStateChanged(auth, function(u) {
       setUser(u);
       if (!u) { setPhase("signin"); return; }
       if (ALLOWED_EMAILS.indexOf(u.email) === -1) { setPhase("wrongAccount"); return; }
-      var stored = localStorage.getItem("synregis_pin");
-      var sessionOk = sessionStorage.getItem("synregis_pin_unlocked") === "1";
-      if (!stored) setPhase("setPin");
-      else if (sessionOk) setPhase("unlocked");
-      else setPhase("enterPin");
+      setPhase("unlocked");
     });
   }, []);
 
@@ -963,51 +1015,17 @@ function Gate(props) {
     });
   }
   function doSignOut() {
-    sessionStorage.removeItem("synregis_pin_unlocked");
     signOut(auth);
-  }
-  function savePin() {
-    setPinError("");
-    if (!/^\d{4}$/.test(pinNew)) { setPinError("PIN must be 4 digits"); return; }
-    if (pinNew !== pinConfirm) { setPinError("PINs do not match"); return; }
-    localStorage.setItem("synregis_pin", pinHash(pinNew));
-    sessionStorage.setItem("synregis_pin_unlocked", "1");
-    setPinNew(""); setPinConfirm("");
-    setPhase("unlocked");
-  }
-  function tryPin() {
-    setPinError("");
-    if (pinHash(pinInput) === localStorage.getItem("synregis_pin")) {
-      sessionStorage.setItem("synregis_pin_unlocked", "1");
-      setPinInput("");
-      setPhase("unlocked");
-    } else {
-      setPinError("Incorrect PIN");
-      setPinInput("");
-    }
-  }
-  function resetPin() {
-    if (!window.confirm("Reset PIN? You'll set a new one immediately.")) return;
-    localStorage.removeItem("synregis_pin");
-    sessionStorage.removeItem("synregis_pin_unlocked");
-    setPhase("setPin");
-  }
-  function lockNow() {
-    sessionStorage.removeItem("synregis_pin_unlocked");
-    setPhase("enterPin");
   }
 
   var wrap = { minHeight: "100vh", background: NAVY, color: CREAM, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "system-ui, -apple-system, sans-serif" };
   var card = { background: CARD, border: "1px solid " + BORDER, borderRadius: 12, padding: 32, maxWidth: 360, width: "100%", textAlign: "center", boxShadow: "0 10px 40px rgba(0,0,0,0.4)" };
   var h1   = { color: GOLD, fontSize: 22, fontWeight: 700, margin: "0 0 8px", letterSpacing: 1 };
   var sub  = { color: MUTED, fontSize: 13, margin: "0 0 24px", lineHeight: 1.5 };
-  var inp  = { width: "100%", boxSizing: "border-box", background: INP, border: "1px solid " + BORDER, borderRadius: 8, padding: "12px 14px", color: CREAM, fontSize: 18, textAlign: "center", letterSpacing: 8, fontFamily: "monospace", marginBottom: 8 };
   var btn  = { width: "100%", padding: "12px 16px", borderRadius: 8, background: GOLD, color: NAVY, border: "none", fontWeight: 700, cursor: "pointer", fontSize: 14, letterSpacing: 0.5 };
-  var link = { background: "none", border: "none", color: MUTED, cursor: "pointer", marginTop: 14, fontSize: 12, textDecoration: "underline" };
   var err  = { color: "#ef4444", fontSize: 12, margin: "8px 0 0", minHeight: 16 };
   var floatBar = { position: "fixed", bottom: 12, right: 12, zIndex: 9999, display: "flex", gap: 6 };
-  var floatBtn = { background: CARD, color: GOLD, border: "1px solid " + BORDER, borderRadius: 999, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontWeight: 600, letterSpacing: 0.5 };
-  var floatBtnMuted = Object.assign({}, floatBtn, { color: MUTED, fontWeight: 500 });
+  var floatBtnMuted = { background: CARD, color: MUTED, border: "1px solid " + BORDER, borderRadius: 999, padding: "6px 12px", fontSize: 11, cursor: "pointer", fontWeight: 500, letterSpacing: 0.5 };
 
   if (phase === "checking") {
     return <div style={wrap}><div style={card}><div style={sub}>Loading…</div></div></div>;
@@ -1031,43 +1049,10 @@ function Gate(props) {
       </div></div>
     );
   }
-  if (phase === "setPin") {
-    return (
-      <div style={wrap}><div style={card}>
-        <h1 style={h1}>SET YOUR PIN</h1>
-        <p style={sub}>4-digit PIN to unlock the CRM on this device.</p>
-        <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="••••" value={pinNew}
-          onChange={function(e){ setPinNew(e.target.value.replace(/\D/g,"").slice(0,4)); }} autoFocus />
-        <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="confirm" value={pinConfirm}
-          onChange={function(e){ setPinConfirm(e.target.value.replace(/\D/g,"").slice(0,4)); }}
-          onKeyDown={function(e){ if (e.key === "Enter") savePin(); }} />
-        <button style={btn} onClick={savePin}>Save PIN</button>
-        <p style={err}>{pinError}</p>
-        <button style={link} onClick={doSignOut}>Sign out</button>
-      </div></div>
-    );
-  }
-  if (phase === "enterPin") {
-    return (
-      <div style={wrap}><div style={card}>
-        <h1 style={h1}>ENTER YOUR PIN</h1>
-        <p style={sub}>Signed in as {user && user.email}</p>
-        <input style={inp} type="password" inputMode="numeric" maxLength={4} placeholder="••••" value={pinInput}
-          onChange={function(e){ setPinInput(e.target.value.replace(/\D/g,"").slice(0,4)); }}
-          onKeyDown={function(e){ if (e.key === "Enter" && pinInput.length === 4) tryPin(); }} autoFocus />
-        <button style={btn} onClick={tryPin} disabled={pinInput.length !== 4}>Unlock</button>
-        <p style={err}>{pinError}</p>
-        <button style={link} onClick={resetPin}>Forgot PIN?</button>
-        <br/>
-        <button style={link} onClick={doSignOut}>Sign out</button>
-      </div></div>
-    );
-  }
   return (
     <>
       {props.children}
       <div style={floatBar}>
-        <button style={floatBtn} onClick={lockNow}>LOCK</button>
         <button style={floatBtnMuted} onClick={doSignOut}>SIGN OUT</button>
       </div>
     </>
@@ -1096,6 +1081,8 @@ function AppInner() {
   var [installPrompt, setInstallPrompt]   = useState(null);
   var [showInstallHelp, setShowInstallHelp] = useState(false);
   var [showSplash, setShowSplash]         = useState(true);
+  var [groupByProm, setGroupByProm]       = useState(false);
+  var isMobile = useIsMobile();
 
   // Already installed? (running as a standalone PWA) — then hide the Install UI.
   var isStandalone = typeof window !== "undefined" && (
@@ -1206,6 +1193,29 @@ function AppInner() {
         localStorage.setItem("synregis_last_notif", today);
       } catch(e) {}
     }
+  }, [leads, settings]);
+
+  // ── Phone notifications: snapshot follow-ups for the service worker ───────
+  // The SW wakes on periodic background sync (installed PWA, Android/Chrome)
+  // and notifies at notifTime even when the app is closed.
+  useEffect(function() {
+    if (!("caches" in window) || !leads.length) return;
+    var followUps = leads
+      .filter(function(l){ return l.nextFollowUp && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted"; })
+      .map(function(l){ return { name: l.projectName, date: l.nextFollowUp }; });
+    var payload = { enabled: !!settings.phoneNotif, notifTime: settings.notifTime || "09:00", followUps: followUps };
+    caches.open("synregis-notif").then(function(cache) {
+      return cache.put("/notif-data", new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
+    }).catch(function(){});
+    if (!settings.phoneNotif || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.ready.then(function(reg) {
+      if (!("periodicSync" in reg)) return;
+      return navigator.permissions.query({ name: "periodic-background-sync" }).then(function(status) {
+        if (status.state === "granted") {
+          return reg.periodicSync.register("synregis-followups", { minInterval: 6 * 60 * 60 * 1000 });
+        }
+      });
+    }).catch(function(){});
   }, [leads, settings]);
 
   async function saveRegions(list) {
@@ -1347,14 +1357,14 @@ function AppInner() {
       <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
 
       {/* Header */}
-      <div style={{ background:"#ffffff", position:"relative", paddingBottom:52, flexShrink:0 }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 28px 6px" }}>
-          <img src={LOGO_SRC} alt="SynRegis" style={{ height:78, width:"auto", objectFit:"contain", display:"block" }}/>
-          <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
+      <div style={{ background:"#ffffff", position:"relative", paddingBottom:isMobile?34:52, flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:isMobile?"10px 14px 2px":"14px 28px 6px" }}>
+          <img src={LOGO_SRC} alt="SynRegis" style={{ height:isMobile?46:78, width:"auto", objectFit:"contain", display:"block" }}/>
+          <div style={{ display:"flex", alignItems:"flex-start", gap:isMobile?8:14 }}>
             <div style={{ textAlign:"right" }}>
-              <div style={{ fontSize:11, color:"#999", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>
-              <div style={{ fontSize:24, fontWeight:700, color:NAVY, lineHeight:1.1 }}>{leads.length} Projects</div>
-              <div style={{ fontSize:12, color:"#888", marginTop:3 }}>
+              {!isMobile && <div style={{ fontSize:11, color:"#999", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>}
+              <div style={{ fontSize:isMobile?16:24, fontWeight:700, color:NAVY, lineHeight:1.1 }}>{leads.length} Projects</div>
+              <div style={{ fontSize:isMobile?10:12, color:"#888", marginTop:3 }}>
                 {leads.filter(function(l){return l.pipelineStage==="Won";}).length} Won
                 &nbsp;|&nbsp;
                 {leads.filter(function(l){return l.pipelineStage==="Negotiation";}).length} Negotiation
@@ -1380,7 +1390,8 @@ function AppInner() {
                   style={{ background:"#fff", borderRadius:12, maxWidth:380, width:"100%", padding:20, color:NAVY }}>
                   <div style={{ fontWeight:800, fontSize:16, marginBottom:10 }}>Installer SynRegis CRM</div>
                   <div style={{ fontSize:13, lineHeight:1.55, color:"#333" }}>
-                    <p style={{ margin:"6px 0" }}><b>Huawei / Android :</b> ouvrez le menu du navigateur (⋮ ou ≡), puis « Ajouter à l'écran d'accueil » / « Installer l'application ».</p>
+                    <p style={{ margin:"6px 0" }}><b>Huawei :</b> utilisez le <b>Navigateur Huawei</b> (pré-installé), pas Chrome — ouvrez ce site, menu (⋮ ou ≡) → « Ajouter à l'écran d'accueil ». L'app s'ouvre alors en plein écran, sans barre ni logo de navigateur. Sur Huawei (sans services Google), Chrome ne peut créer qu'un raccourci avec son logo.</p>
+                    <p style={{ margin:"6px 0" }}><b>Autres Android (Chrome) :</b> menu ⋮ → « Installer l'application ».</p>
                     <p style={{ margin:"6px 0" }}><b>Chrome (ordinateur) :</b> cliquez l'icône d'installation dans la barre d'adresse, ou menu ⋮ → « Installer SynRegis CRM… ».</p>
                     <p style={{ margin:"6px 0" }}><b>iPhone / iPad (Safari) :</b> bouton Partager → « Sur l'écran d'accueil ».</p>
                   </div>
@@ -1402,7 +1413,7 @@ function AppInner() {
           </div>
         </div>
         <svg viewBox="0 0 1440 56" preserveAspectRatio="none"
-          style={{ position:"absolute", bottom:0, left:0, width:"100%", height:56, display:"block" }}>
+          style={{ position:"absolute", bottom:0, left:0, width:"100%", height:isMobile?36:56, display:"block" }}>
           <path d="M0,18 C160,52 320,0 480,26 C640,52 800,4 960,28 C1120,52 1280,8 1440,30 L1440,56 L0,56 Z" fill={CARD}/>
         </svg>
       </div>
@@ -1426,7 +1437,7 @@ function AppInner() {
       <div style={{ display:"flex", flex:1, overflow:"hidden", position:"relative" }}>
 
         {/* Left: lead list */}
-        <div style={{ width:300, flexShrink:0, borderRight:"1px solid "+BORDER, display:"flex", flexDirection:"column", background:CARD }}>
+        <div style={{ width:isMobile?"100%":300, flexShrink:0, borderRight:isMobile?"none":"1px solid "+BORDER, display:"flex", flexDirection:"column", background:CARD }}>
           <div style={{ padding:"10px 12px", borderBottom:"1px solid "+BORDER, display:"flex", flexDirection:"column", gap:8 }}>
             <input value={search} onChange={function(e){setSearch(e.target.value);}}
               placeholder="Search projects..."
@@ -1455,6 +1466,11 @@ function AppInner() {
                 <option value="All">All Regions</option>
                 {regions.map(function(r){ return <option key={r} value={r}>{r}</option>; })}
               </select>
+              <button onClick={function(){ setGroupByProm(!groupByProm); }}
+                title="Group projects by promoteur"
+                style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+(groupByProm?GOLD:BORDER), background:groupByProm?GOLD:CARD2, color:groupByProm?NAVY:MUTED, cursor:"pointer", fontSize:11, fontWeight:groupByProm?700:400, flexShrink:0 }}>
+                Group
+              </button>
               <button onClick={function(){ setShowEditRegions(true); }}
                 style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:MUTED, cursor:"pointer", fontSize:11, flexShrink:0 }}>
                 Regions
@@ -1481,11 +1497,68 @@ function AppInner() {
                 </div>
               );
             })()}
+            {(function(){
+              if (!settings.banner || !settings.stale) return null;
+              var staleLeads = leads
+                .map(function(l){ return { lead: l, days: staleDays(l) }; })
+                .filter(function(x){ return x.days !== null; })
+                .sort(function(a,b){ return b.days - a.days; });
+              if (!staleLeads.length) return null;
+              return (
+                <div style={{ margin:"8px 10px 4px", padding:"8px 12px", borderRadius:8, background:"#f59e0b18", border:"1px solid #f59e0b55" }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#f59e0b", marginBottom:4 }}>GOING QUIET ({staleLeads.length})</div>
+                  {staleLeads.slice(0,5).map(function(x){
+                    return (
+                      <div key={x.lead.id} onClick={function(){ setSelected(x.lead); }}
+                        style={{ fontSize:12, color:CREAM, cursor:"pointer", padding:"2px 0", display:"flex", justifyContent:"space-between" }}>
+                        <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:8 }}>{x.lead.projectName}</span>
+                        <span style={{ color:"#f59e0b", fontSize:11, flexShrink:0 }}>{x.days}d silent</span>
+                      </div>
+                    );
+                  })}
+                  {staleLeads.length > 5 && (
+                    <div style={{ fontSize:11, color:MUTED, marginTop:3 }}>+ {staleLeads.length - 5} more — look for the amber tags below</div>
+                  )}
+                </div>
+              );
+            })()}
             {filtered.length===0
               ? <div style={{ padding:20, color:MUTED, fontSize:13, textAlign:"center" }}>No results</div>
-              : filtered.map(function(l){
-                  return <LeadRow key={l.id} lead={l} settings={settings} selected={selFull&&selFull.id===l.id} onSelect={function(x){ setSelected(x); }}/>;
-                })
+              : groupByProm
+                ? (function(){
+                    var groups = {};
+                    var order = [];
+                    filtered.forEach(function(l){
+                      var k = (l.promoteurKey && l.promoteurKey.length > 2) ? l.promoteurKey
+                        : (l.promoteur || "").trim().toLowerCase() || "__none__";
+                      if (!groups[k]) { groups[k] = []; order.push(k); }
+                      groups[k].push(l);
+                    });
+                    order.sort(function(a,b){
+                      if (groups[b].length !== groups[a].length) return groups[b].length - groups[a].length;
+                      var na = (groups[a][0].promoteur || "zzz").toLowerCase();
+                      var nb = (groups[b][0].promoteur || "zzz").toLowerCase();
+                      return na < nb ? -1 : na > nb ? 1 : 0;
+                    });
+                    return order.map(function(k){
+                      var g = groups[k];
+                      return (
+                        <div key={k}>
+                          <div style={{ padding:"6px 14px", background:CARD2, borderBottom:"1px solid "+BORDER, position:"sticky", top:0, zIndex:5,
+                            fontSize:11, fontWeight:700, color:GOLD, letterSpacing:"0.04em", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{g[0].promoteur || "No promoteur"}</span>
+                            <span style={{ color:MUTED, flexShrink:0, marginLeft:8 }}>{g.length} project{g.length>1?"s":""}</span>
+                          </div>
+                          {g.map(function(l){
+                            return <LeadRow key={l.id} lead={l} settings={settings} selected={selFull&&selFull.id===l.id} onSelect={function(x){ setSelected(x); }}/>;
+                          })}
+                        </div>
+                      );
+                    });
+                  })()
+                : filtered.map(function(l){
+                    return <LeadRow key={l.id} lead={l} settings={settings} selected={selFull&&selFull.id===l.id} onSelect={function(x){ setSelected(x); }}/>;
+                  })
             }
           </div>
           <div style={{ padding:"8px 12px", borderTop:"1px solid "+BORDER, fontSize:11, color:MUTED, textAlign:"center" }}>
@@ -1494,18 +1567,20 @@ function AppInner() {
           </div>
         </div>
 
-        {/* Right: detail panel */}
-        <div style={{ flex:1, display:"flex", flexDirection:"column", background:CARD, overflow:"hidden", ...(window.innerWidth<640&&selFull?{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}:{}) }}>
-          {selFull
-            ? <div style={{display:"flex", flexDirection:"column", height:"100%"}}>
-                <div style={{padding:"10px 16px", borderBottom:"1px solid "+BORDER, flexShrink:0}}>
-                  <button onClick={function(){ setSelected(null); }} style={{padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13}}>← Back</button>
+        {/* Right: detail panel — hidden on mobile until a lead is selected, then fullscreen */}
+        {(!isMobile || selFull) && (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", background:CARD, overflow:"hidden", ...(isMobile&&selFull?{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}:{}) }}>
+            {selFull
+              ? <div style={{display:"flex", flexDirection:"column", height:"100%"}}>
+                  <div style={{padding:"10px 16px", borderBottom:"1px solid "+BORDER, flexShrink:0}}>
+                    <button onClick={function(){ setSelected(null); }} style={{padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13}}>← Back</button>
+                  </div>
+                  <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onMeetingLog={setMeetingLogLead} onSelect={function(r){ setSelected(r); }} onDelete={deleteLead}/>
                 </div>
-                <DetailPanel lead={selFull} allLeads={leads} onEdit={startEdit} onCallLog={setCallLogLead} onMeetingLog={setMeetingLogLead} onSelect={function(r){ setSelected(r); }} onDelete={deleteLead}/>
-              </div>
-            : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
-          }
-        </div>
+              : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
+            }
+          </div>
+        )}
       </div>
 
       {/* Modals */}

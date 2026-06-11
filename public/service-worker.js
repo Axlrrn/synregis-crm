@@ -38,3 +38,50 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request).then(r => r || caches.match('/')))
   );
 });
+
+// ── Follow-up reminders (works with the app closed) ─────────────────────────
+// The app keeps a snapshot of upcoming follow-ups in the 'synregis-notif'
+// cache. Periodic background sync wakes this worker a few times a day; if
+// follow-ups are due and it's past the configured time, notify once per day.
+const DATA_CACHE = 'synregis-notif';
+
+async function checkFollowUps() {
+  try {
+    const cache = await caches.open(DATA_CACHE);
+    const res = await cache.match('/notif-data');
+    if (!res) return;
+    const data = await res.json();
+    if (!data || !data.enabled) return;
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+    const marker = await cache.match('/notif-last');
+    if (marker && (await marker.text()) === today) return;
+    const parts = (data.notifTime || '09:00').split(':');
+    const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+    if (now.getHours() < h || (now.getHours() === h && now.getMinutes() < m)) return;
+    const due = (data.followUps || []).filter(f => f.date && f.date <= today);
+    if (!due.length) return;
+    const names = due.slice(0, 3).map(f => f.name).join(', ');
+    await self.registration.showNotification('SynRegis Follow-Up', {
+      body: due.length + ' project' + (due.length > 1 ? 's need' : ' needs') + ' follow-up: ' + names + (due.length > 3 ? '…' : ''),
+      icon: '/logo192.png',
+      badge: '/logo192.png',
+      tag: 'synregis-followup'
+    });
+    await cache.put('/notif-last', new Response(today));
+  } catch (e) { /* never break the worker over a reminder */ }
+}
+
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag === 'synregis-followups') event.waitUntil(checkFollowUps());
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ('focus' in c) return c.focus(); }
+      return self.clients.openWindow('/');
+    })
+  );
+});
