@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="SynRegisTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:statusBarColor">#08111f</item>
+        <item name="android:navigationBarColor">#08111f</item>
+        <item name="android:windowBackground">#08111f</item>
+    </style>
+</resources>
