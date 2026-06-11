@@ -14,7 +14,8 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, browserLocalPersistence, setPersistence } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, browserLocalPersistence, setPersistence,
+  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword } from "firebase/auth";
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -94,6 +95,51 @@ function staleDays(lead) {
   if (ACTIVE_STAGES.indexOf(lead.pipelineStage) === -1) return null;
   var d = daysSince(lastActivityDate(lead));
   return d !== null && d >= STALE_DAYS ? d : null;
+}
+
+// ── AI lead extraction (Gemini) ───────────────────────────────────────────────
+// Tries model aliases in order so the integration survives Google renames.
+var GEMINI_MODELS = ["gemini-flash-latest", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+
+async function extractLeadWithAI(text, apiKey, regions) {
+  var prompt =
+    "You extract real-estate lead data for a property CRM in Mauritius. " +
+    "From the announcement/ad text below, extract these fields and reply with ONLY a JSON object (no markdown):\n" +
+    '{"projectName": string, "location": string, "promoteur": string (developer/company), ' +
+    '"contactName": string (person name if mentioned), "phone": string (as written, first number if several), ' +
+    '"units": string (total units, e.g. \'24 units\'), "unitDetails": string (unit types/sizes/prices breakdown), ' +
+    '"amenities": string (comma-separated), ' +
+    '"region": string (one of: ' + regions.join(", ") + " — pick the best match for the location, or empty if unsure), " +
+    '"notes": string (anything else useful: prices, delivery dates, syndic fees, website, source)}\n' +
+    "Use an empty string for unknown fields. Never invent data.\n\nTEXT:\n" + text;
+  var lastError = null;
+  for (var i = 0; i < GEMINI_MODELS.length; i++) {
+    var res;
+    try {
+      res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODELS[i] + ":generateContent?key=" + encodeURIComponent(apiKey),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0 },
+          }),
+        }
+      );
+    } catch (e) { lastError = new Error("Network error — check your connection."); continue; }
+    if (res.status === 404) { lastError = new Error("No Gemini model available for this key."); continue; }
+    if (!res.ok) {
+      var err = await res.json().catch(function(){ return null; });
+      throw new Error((err && err.error && err.error.message) || ("Gemini error " + res.status));
+    }
+    var data = await res.json();
+    var out = data && data.candidates && data.candidates[0] && data.candidates[0].content &&
+      data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+    if (!out) throw new Error("Empty response from Gemini.");
+    return JSON.parse(out);
+  }
+  throw lastError || new Error("Extraction failed.");
 }
 
 // ── Responsive helper ─────────────────────────────────────────────────────────
@@ -495,7 +541,7 @@ function AddForm(props) {
     priority:"", notes:"", callLog:[], nextFollowUp:"", createdAt:"",
     region:"", gpsCoords:"", attachments:[]
   };
-  var [form, setForm] = useState(blank);
+  var [form, setForm] = useState(function(){ return Object.assign({}, blank, props.initial || {}); });
   function f(k) { return function(v){ setForm(function(p){ return {...p,[k]:v}; }); }; }
   var ovl = { position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" };
   var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"92%", maxWidth:560, maxHeight:"92vh", display:"flex", flexDirection:"column", overflow:"hidden" };
@@ -837,6 +883,59 @@ function DetailPanel(props) {
   );
 }
 
+function PasteLeadModal(props) {
+  var [text, setText] = useState(props.initialText || "");
+  var [busy, setBusy] = useState(false);
+  var [error, setError] = useState("");
+  var hasKey = !!(props.geminiKey && props.geminiKey.trim());
+  async function analyse() {
+    if (!text.trim() || busy) return;
+    setError(""); setBusy(true);
+    try {
+      var fields = await extractLeadWithAI(text, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS);
+      props.onExtracted(fields, text);
+    } catch(e) {
+      setError(e && e.message ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+  var ovl = { position:"fixed", inset:0, background:"rgba(0,0,0,0.8)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 };
+  var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"100%", maxWidth:520, display:"flex", flexDirection:"column" };
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget && !busy) props.onClose(); }}>
+      <div style={sht}>
+        <div style={{ padding:"16px 20px", borderBottom:"1px solid "+BORDER, color:GOLD, fontWeight:700 }}>
+          ✨ New Lead from Text
+        </div>
+        <div style={{ padding:16 }}>
+          <div style={{ fontSize:12, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
+            Paste a property ad, listing or message — AI fills the lead form for you to review.
+          </div>
+          <textarea value={text} onChange={function(e){ setText(e.target.value); }}
+            placeholder="Paste the announcement text here..."
+            rows={9} autoFocus
+            style={{ width:"100%", background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"10px 12px", color:CREAM, fontSize:13, resize:"vertical", boxSizing:"border-box" }}/>
+          {!hasKey && (
+            <div style={{ marginTop:8, fontSize:12, color:"#f59e0b", background:"#f59e0b18", border:"1px solid #f59e0b55", borderRadius:6, padding:"8px 10px", lineHeight:1.5 }}>
+              No AI key configured. Add your free Gemini API key in Settings → AI Extraction first.
+            </div>
+          )}
+          {error && <div style={{ marginTop:8, fontSize:12, color:"#ef4444", lineHeight:1.4 }}>{error}</div>}
+        </div>
+        <div style={{ padding:"0 16px 16px", display:"flex", gap:8, justifyContent:"flex-end" }}>
+          <button onClick={props.onClose} disabled={busy}
+            style={{ padding:"8px 16px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:13, opacity:busy?0.5:1 }}>Cancel</button>
+          <button onClick={analyse} disabled={busy || !text.trim() || !hasKey}
+            style={{ padding:"8px 18px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700,
+              opacity:(busy || !text.trim() || !hasKey)?0.5:1 }}>
+            {busy ? "Analysing…" : "Analyse with AI"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ToggleRow(props) {
   return (
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 0", borderBottom:"1px solid #1c355044" }}>
@@ -856,8 +955,47 @@ function ToggleRow(props) {
 
 function SettingsModal(props) {
   var s = props.settings;
+  var [keyDraft, setKeyDraft] = useState(props.geminiKey || "");
+  var [keySaved, setKeySaved] = useState(false);
+  var [pwDraft, setPwDraft] = useState("");
+  var [pwMsg, setPwMsg] = useState(null); // {ok, text}
   function set(key, val) { props.onChange(Object.assign({}, s, { [key]: val })); }
   function toggle(key) { set(key, !s[key]); }
+  function saveKey() {
+    props.onSaveGeminiKey(keyDraft.trim());
+    setKeySaved(true);
+    setTimeout(function(){ setKeySaved(false); }, 2000);
+  }
+  async function saveAppPassword() {
+    setPwMsg(null);
+    var pw = pwDraft;
+    if (pw.length < 6) { setPwMsg({ ok:false, text:"Password must be at least 6 characters." }); return; }
+    var user = auth.currentUser;
+    if (!user || !user.email) { setPwMsg({ ok:false, text:"Not signed in." }); return; }
+    try {
+      await linkWithCredential(user, EmailAuthProvider.credential(user.email, pw));
+      setPwMsg({ ok:true, text:"App password set. You can now sign in with email + password in the app." });
+      setPwDraft("");
+    } catch(e) {
+      if (e && e.code === "auth/provider-already-linked") {
+        try {
+          await updatePassword(user, pw);
+          setPwMsg({ ok:true, text:"App password updated." });
+          setPwDraft("");
+        } catch(e2) {
+          setPwMsg({ ok:false, text: e2 && e2.code === "auth/requires-recent-login"
+            ? "For security, sign out and sign in again, then retry."
+            : (e2 && e2.message) || String(e2) });
+        }
+      } else if (e && e.code === "auth/requires-recent-login") {
+        setPwMsg({ ok:false, text:"For security, sign out and sign in again, then retry." });
+      } else if (e && e.code === "auth/operation-not-allowed") {
+        setPwMsg({ ok:false, text:"Email/password sign-in is not enabled in Firebase yet (Console → Authentication → Sign-in method)." });
+      } else {
+        setPwMsg({ ok:false, text:(e && e.message) || String(e) });
+      }
+    }
+  }
   var ovl = { position:"fixed", inset:0, background:"#000000aa", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" };
   var box = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, padding:28, width:360, maxWidth:"92vw", maxHeight:"90vh", overflowY:"auto" };
   function requestAndToggle(key) {
@@ -896,6 +1034,43 @@ function SettingsModal(props) {
         )}
         <div style={{ fontSize:11, color:MUTED, marginTop:16, lineHeight:1.6, borderTop:"1px solid "+BORDER, paddingTop:12 }}>
           Phone notifications require browser notification permission. On iPhone, open this app in Safari, tap Share, then "Add to Home Screen", then reopen from your home screen.
+        </div>
+
+        <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+          <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
+            AI Extraction
+          </div>
+          <div style={{ fontSize:11, color:MUTED, marginBottom:8, lineHeight:1.5 }}>
+            Free Gemini API key for the "New Lead from Text" feature — create one at aistudio.google.com (Get API key).
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input type="password" value={keyDraft} placeholder="Gemini API key (AIza...)"
+              onChange={function(e){ setKeyDraft(e.target.value); }}
+              style={{ flex:1, minWidth:0, background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"8px 10px", color:CREAM, fontSize:12, outline:"none" }}/>
+            <button onClick={saveKey}
+              style={{ padding:"8px 14px", borderRadius:6, border:"none", background:keySaved?"#10b981":GOLD, color:keySaved?"#fff":NAVY, cursor:"pointer", fontSize:12, fontWeight:700, flexShrink:0 }}>
+              {keySaved ? "Saved ✓" : "Save"}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+          <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
+            App Password
+          </div>
+          <div style={{ fontSize:11, color:MUTED, marginBottom:8, lineHeight:1.5 }}>
+            Set a password to sign in inside the SynRegis Android app (Google sign-in doesn't work there). Same account, same data.
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <input type="password" value={pwDraft} placeholder="New app password (min 6 chars)"
+              onChange={function(e){ setPwDraft(e.target.value); }}
+              style={{ flex:1, minWidth:0, background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"8px 10px", color:CREAM, fontSize:12, outline:"none" }}/>
+            <button onClick={saveAppPassword}
+              style={{ padding:"8px 14px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:12, fontWeight:700, flexShrink:0 }}>
+              Set
+            </button>
+          </div>
+          {pwMsg && <div style={{ marginTop:8, fontSize:11, lineHeight:1.4, color: pwMsg.ok ? "#10b981" : "#ef4444" }}>{pwMsg.text}</div>}
         </div>
         {!props.isStandalone && (
           <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
@@ -1000,6 +1175,10 @@ function Gate(props) {
   var [user, setUser]               = useState(undefined);
   var [phase, setPhase]             = useState("checking");
   var [authError, setAuthError]     = useState("");
+  var [email, setEmail]             = useState(ALLOWED_EMAILS.length === 1 ? ALLOWED_EMAILS[0] : "");
+  var [pw, setPw]                   = useState("");
+  // Inside the Android wrapper Google's OAuth popup is blocked — email only.
+  var inApp = typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent);
 
   useEffect(function() {
     return onAuthStateChanged(auth, function(u) {
@@ -1014,6 +1193,20 @@ function Gate(props) {
     setAuthError("");
     signInWithPopup(auth, googleProvider).catch(function(e){
       setAuthError(e && e.message ? e.message : String(e));
+    });
+  }
+  function doEmailSignIn() {
+    setAuthError("");
+    if (!email.trim() || !pw) { setAuthError("Enter email and password."); return; }
+    signInWithEmailAndPassword(auth, email.trim(), pw).catch(function(e){
+      var code = e && e.code;
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+        setAuthError("Wrong password — or no app password set yet. Set one on the website: Settings → App Password.");
+      } else if (code === "auth/operation-not-allowed") {
+        setAuthError("Email sign-in not enabled yet (Firebase Console → Authentication → Sign-in method → Email/Password).");
+      } else {
+        setAuthError(e && e.message ? e.message : String(e));
+      }
     });
   }
   function doSignOut() {
@@ -1033,11 +1226,28 @@ function Gate(props) {
     return <div style={wrap}><div style={card}><div style={sub}>Loading…</div></div></div>;
   }
   if (phase === "signin") {
+    var inpSt = { width:"100%", boxSizing:"border-box", background:"#091525", border:"1px solid "+BORDER, borderRadius:8, padding:"11px 12px", color:CREAM, fontSize:14, outline:"none", marginBottom:8 };
     return (
       <div style={wrap}><div style={card}>
         <h1 style={h1}>SYNREGIS CRM</h1>
         <p style={sub}>Sign in to continue.</p>
-        <button style={btn} onClick={doSignIn}>Sign in with Google</button>
+        {!inApp && (
+          <>
+            <button style={btn} onClick={doSignIn}>Sign in with Google</button>
+            <div style={{ display:"flex", alignItems:"center", gap:10, margin:"16px 0", color:MUTED, fontSize:11 }}>
+              <div style={{ flex:1, height:1, background:BORDER }}/>or<div style={{ flex:1, height:1, background:BORDER }}/>
+            </div>
+          </>
+        )}
+        <input style={inpSt} type="email" placeholder="Email" value={email} autoComplete="username"
+          onChange={function(e){ setEmail(e.target.value); }}/>
+        <input style={inpSt} type="password" placeholder="Password" value={pw} autoComplete="current-password"
+          onChange={function(e){ setPw(e.target.value); }}
+          onKeyDown={function(e){ if (e.key === "Enter") doEmailSignIn(); }}/>
+        <button style={Object.assign({}, btn, inApp ? {} : { background:"transparent", color:GOLD, border:"1px solid "+GOLD+"66" })}
+          onClick={doEmailSignIn}>
+          Sign in with password
+        </button>
         {authError ? <p style={err}>{authError}</p> : null}
       </div></div>
     );
@@ -1084,6 +1294,9 @@ function AppInner() {
   var [showInstallHelp, setShowInstallHelp] = useState(false);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
+  var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
+  var [addPrefill, setAddPrefill]         = useState(null);
+  var [geminiKey, setGeminiKey]           = useState("");
   var isMobile = useIsMobile();
   var backArmed = useRef(false);
   var layersRef = useRef([]);
@@ -1157,16 +1370,58 @@ function AppInner() {
     return function() { unsub(); };
   }, []);
 
-  // ── Load/save custom regions ───────────────────────────────────────────────
+  // ── Load/save custom regions + AI key ──────────────────────────────────────
   useEffect(function() {
-    async function loadRegions() {
+    async function loadConfig() {
       try {
         var snap = await getDoc(doc(db, "config", "app"));
-        if (snap.exists() && snap.data().regions) { setRegions(snap.data().regions); }
+        if (snap.exists()) {
+          if (snap.data().regions) setRegions(snap.data().regions);
+          if (snap.data().geminiKey) setGeminiKey(snap.data().geminiKey);
+        }
       } catch(e) { /* use defaults */ }
     }
-    loadRegions();
+    loadConfig();
   }, []);
+
+  async function saveGeminiKey(key) {
+    setGeminiKey(key);
+    try { await setDoc(doc(db, "config", "app"), { geminiKey: key }, { merge: true }); } catch(e) {}
+  }
+
+  // ── Shared text from the Android app (share → SynRegis) ────────────────────
+  useEffect(function() {
+    try {
+      var p = new URLSearchParams(window.location.search);
+      var sharedText = p.get("shared");
+      if (sharedText) {
+        setShowPaste(sharedText);
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch(e) {}
+  }, []);
+
+  function handleExtracted(fields, rawText) {
+    var f = fields || {};
+    var promoteur = (f.promoteur || "").trim();
+    var region = (f.region || "").trim();
+    setAddPrefill({
+      projectName: (f.projectName || "").trim(),
+      location: (f.location || "").trim(),
+      promoteur: promoteur,
+      promoteurKey: promoteur.toLowerCase(),
+      promoteurFull: promoteur,
+      contactName: (f.contactName || "").trim(),
+      phone: (f.phone || "").trim(),
+      units: (f.units || "").trim(),
+      unitDetails: (f.unitDetails || "").trim(),
+      amenities: (f.amenities || "").trim(),
+      region: regions.indexOf(region) !== -1 ? region : "",
+      notes: ((f.notes || "").trim() + "\n\n--- Source text ---\n" + (rawText || "")).trim(),
+    });
+    setShowPaste(null);
+    setShowAdd(true);
+  }
 
   // ── Settings persistence ───────────────────────────────────────────────────
   useEffect(function() { saveSettingsLS(settings); }, [settings]);
@@ -1228,6 +1483,7 @@ function AppInner() {
   // if layers remain. Closing everything via the UI consumes the sentinel.
   var layers = [];
   if (showInstallHelp)  layers.push(function(){ setShowInstallHelp(false); });
+  if (showPaste !== null) layers.push(function(){ setShowPaste(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
   if (showEditRegions)  layers.push(function(){ setShowEditRegions(false); });
   if (callLogLead)      layers.push(function(){ setCallLogLead(null); });
@@ -1332,6 +1588,7 @@ function AppInner() {
     try {
       var ref = await addDoc(collection(db, "leads"), lead);
       setShowAdd(false);
+      setAddPrefill(null);
       setSelected({ ...lead, id: ref.id });
     } catch(e) { console.error("Add failed:", e); }
   }
@@ -1483,9 +1740,14 @@ function AppInner() {
                   {PROJECT_STAGES.map(function(s){ return <option key={s} value={s}>{s}</option>; })}
                 </optgroup>
               </select>
-              <button onClick={function(){ setShowAdd(true); }}
+              <button onClick={function(){ setAddPrefill(null); setShowAdd(true); }}
                 style={{ padding:"7px 12px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
                 + Add
+              </button>
+              <button onClick={function(){ setShowPaste(""); }}
+                title="Create a lead from pasted ad text (AI)"
+                style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
+                ✨ AI
               </button>
               <button onClick={function(){ setShowArchive(!showArchive); setSelected(null); }}
                 style={{ padding:"7px 12px", borderRadius:6, border:"1px solid #ef444466", background:showArchive?"#ef4444":"transparent", color:showArchive?"#fff":"#ef4444", cursor:"pointer", fontSize:12, flexShrink:0 }}>
@@ -1615,7 +1877,17 @@ function AppInner() {
       </div>
 
       {/* Modals */}
-      {showAdd && <AddForm allLeads={leads} regions={regions} onAdd={addLead} onCancel={function(){ setShowAdd(false); }}/>}
+      {showAdd && <AddForm allLeads={leads} regions={regions} initial={addPrefill} onAdd={addLead}
+        onCancel={function(){ setShowAdd(false); setAddPrefill(null); }}/>}
+      {showPaste !== null && (
+        <PasteLeadModal
+          initialText={showPaste}
+          geminiKey={geminiKey}
+          regions={regions}
+          onExtracted={handleExtracted}
+          onClose={function(){ setShowPaste(null); }}
+        />
+      )}
       {editLead && editDraft && (
         <EditForm
           lead={editDraft}
@@ -1659,6 +1931,8 @@ function AppInner() {
           onClose={function(){ setShowSettings(false); }}
           isStandalone={isStandalone}
           onInstall={triggerInstall}
+          geminiKey={geminiKey}
+          onSaveGeminiKey={saveGeminiKey}
         />
       )}
     </div>
