@@ -33,6 +33,6 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
-  "theme_color": "#ffffff",
-  "background_color": "#ffffff"
+  "theme_color": "#08111f",
+  "background_color": "#08111f"
 }

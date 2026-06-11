@@ -56,9 +56,9 @@ const PRC = {
   "Top Priority":"#ef4444","High":"#f59e0b","Warm":"#f97316","Cold":"#6b8aaa","Inbound Only":"#3b82f6",
 };
 
-// Opaque white background baked in: force-dark browsers (Huawei dark mode)
-// darken the white header/splash but leave image pixels alone.
-const LOGO_SRC = "/logo_splash.png";
+// Light-on-dark variant (cream text, gold keys) for the navy header/splash —
+// dark surfaces are immune to browser force-dark (Huawei dark mode).
+const LOGO_SRC = "/logo_dark.png";
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
 var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, phoneNotif: false, notifTime: "09:00" };
@@ -974,7 +974,7 @@ function SplashScreen({ visible }) {
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 9999,
-      background: "#ffffff",
+      background: NAVY,
       display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center",
       gap: 20,
@@ -983,7 +983,7 @@ function SplashScreen({ visible }) {
       pointerEvents: visible ? "all" : "none",
     }}>
       <img
-        src="/logo_splash.png"
+        src="/logo_dark.png"
         alt="SynRegis"
         style={{
           width: "85vw",
@@ -1398,14 +1398,14 @@ function AppInner() {
       <div style={{ display:"flex", flexDirection:"column", height:"100vh", background:NAVY, color:CREAM, fontFamily:"Inter, -apple-system, sans-serif", overflow:"hidden" }}>
 
       {/* Header */}
-      <div style={{ background:"#ffffff", position:"relative", paddingBottom:isMobile?34:52, flexShrink:0 }}>
+      <div style={{ background:NAVY, position:"relative", paddingBottom:isMobile?34:52, flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:isMobile?"10px 14px 2px":"14px 28px 6px" }}>
           <img src={LOGO_SRC} alt="SynRegis" style={{ height:isMobile?46:78, width:"auto", objectFit:"contain", display:"block" }}/>
           <div style={{ display:"flex", alignItems:"flex-start", gap:isMobile?8:14 }}>
             <div style={{ textAlign:"right" }}>
-              {!isMobile && <div style={{ fontSize:11, color:"#999", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>}
-              <div style={{ fontSize:isMobile?16:24, fontWeight:700, color:NAVY, lineHeight:1.1 }}>{leads.length} Projects</div>
-              <div style={{ fontSize:isMobile?10:12, color:"#888", marginTop:3 }}>
+              {!isMobile && <div style={{ fontSize:11, color:MUTED, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>}
+              <div style={{ fontSize:isMobile?16:24, fontWeight:700, color:CREAM, lineHeight:1.1 }}>{leads.length} Projects</div>
+              <div style={{ fontSize:isMobile?10:12, color:MUTED, marginTop:3 }}>
                 {leads.filter(function(l){return l.pipelineStage==="Won";}).length} Won
                 &nbsp;|&nbsp;
                 {leads.filter(function(l){return l.pipelineStage==="Negotiation";}).length} Negotiation
@@ -1435,7 +1435,7 @@ function AppInner() {
               </div>
             )}
             <button onClick={function(){ setShowSettings(true); }} title="Settings"
-              style={{ marginTop:4, background:"transparent", border:"1px solid #ccc", borderRadius:8, cursor:"pointer", padding:"7px 9px", color:NAVY, display:"flex", alignItems:"center" }}>
+              style={{ marginTop:4, background:"transparent", border:"1px solid "+BORDER, borderRadius:8, cursor:"pointer", padding:"7px 9px", color:GOLD, display:"flex", alignItems:"center" }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
