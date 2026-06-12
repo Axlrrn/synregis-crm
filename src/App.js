@@ -108,7 +108,8 @@ async function extractLeadWithAI(text, image, apiKey, regions, existingLeads) {
     'Reply with ONLY a JSON object (no markdown): {"projects": [ ...one entry per distinct project... ]}\n' +
     "Each project entry:\n" +
     '{"projectName": string, "location": string, "promoteur": string (developer/company), ' +
-    '"contactName": string (person name if mentioned), "phone": string (as written, first number if several), ' +
+    '"contactName": string (person names if mentioned, several separated by " / "), ' +
+    '"phone": string (ALL phone numbers seen, as written, separated by " / "), ' +
     '"units": string (total units, e.g. \'24 units\'), "unitDetails": string (unit types/sizes/prices breakdown), ' +
     '"amenities": string (comma-separated), ' +
     '"region": string (one of: ' + regions.join(", ") + " — pick the best match for the location, or empty if unsure), " +
@@ -162,7 +163,8 @@ async function extractLeadWithAI(text, image, apiKey, regions, existingLeads) {
 // new/conflicting info goes to notes under a dated header.
 function mergeExtractedIntoLead(lead, f, rawText, regionsList) {
   var merged = { ...lead };
-  var fillable = ["location", "promoteur", "contactName", "phone", "units", "unitDetails", "amenities"];
+  // Descriptive fields: keep existing, note differences.
+  var fillable = ["location", "promoteur", "units", "unitDetails"];
   var conflicts = [];
   fillable.forEach(function(k){
     var nv = ((f && f[k]) || "").trim();
@@ -170,6 +172,41 @@ function mergeExtractedIntoLead(lead, f, rawText, regionsList) {
     if (!String(merged[k] || "").trim()) merged[k] = nv;
     else if (nv.toLowerCase() !== String(merged[k]).trim().toLowerCase()) conflicts.push(k + ": " + nv);
   });
+  // Contact fields accumulate: new numbers/names/amenities are ADDED, deduped.
+  var newPhoneRaw = ((f && f.phone) || "").trim();
+  if (newPhoneRaw) {
+    if (!String(merged.phone || "").trim()) {
+      merged.phone = newPhoneRaw;
+    } else {
+      var have = phonesIn(merged.phone);
+      var additions = newPhoneRaw.split(/[/;,]|\bou\b|\bet\b/i)
+        .map(function(s){ return s.trim(); })
+        .filter(function(s){
+          var n = normalizePhone(s);
+          return n.length >= 6 && have.indexOf(n) === -1;
+        });
+      if (additions.length) merged.phone = merged.phone + " / " + additions.join(" / ");
+    }
+  }
+  var newContact = ((f && f.contactName) || "").trim();
+  if (newContact) {
+    var curContact = String(merged.contactName || "").trim();
+    if (!curContact) merged.contactName = newContact;
+    else if (curContact.toLowerCase().indexOf(newContact.toLowerCase()) === -1) {
+      merged.contactName = curContact + " / " + newContact;
+    }
+  }
+  var newAmen = ((f && f.amenities) || "").trim();
+  if (newAmen) {
+    var curAmen = String(merged.amenities || "").trim();
+    if (!curAmen) merged.amenities = newAmen;
+    else {
+      var haveAmen = curAmen.toLowerCase().split(",").map(function(s){ return s.trim(); });
+      var addAmen = newAmen.split(",").map(function(s){ return s.trim(); })
+        .filter(function(a){ return a && haveAmen.indexOf(a.toLowerCase()) === -1; });
+      if (addAmen.length) merged.amenities = curAmen + ", " + addAmen.join(", ");
+    }
+  }
   var region = ((f && f.region) || "").trim();
   if (!String(merged.region || "").trim() && (regionsList || []).indexOf(region) !== -1) merged.region = region;
   if (merged.promoteur && !String(merged.promoteurKey || "").trim()) {
@@ -245,6 +282,14 @@ function normalizePhone(str) {
   }
   return d;
 }
+// A phone field may hold several numbers ("5712 3456 / 5777 8888") — normalize each.
+function phonesIn(str) {
+  if (!str) return [];
+  return String(str).split(/[/;,]|\bou\b|\bet\b/i)
+    .map(function(s){ return normalizePhone(s); })
+    .filter(function(n){ return n.length >= 6; });
+}
+
 function extractPhones(text) {
   if (!text) return [];
   var matches = text.match(/\b\d[\d\s\-\.]{4,9}\d\b/g);
@@ -253,12 +298,18 @@ function extractPhones(text) {
 }
 function findPhoneMatches(phone, leadId, allLeads) {
   if (!phone || !phone.trim()) return [];
-  var norm = normalizePhone(phone);
-  if (!norm || norm.length < 6) return [];
+  var norms = phonesIn(phone);
+  if (!norms.length) {
+    var single = normalizePhone(phone);
+    if (!single || single.length < 6) return [];
+    norms = [single];
+  }
+  var norm = norms[0];
   var results = [];
   (allLeads || []).forEach(function(l) {
     if (l.id === leadId) return;
-    if (l.phone && normalizePhone(l.phone) === norm) {
+    var theirs = phonesIn(l.phone);
+    if (theirs.some(function(t){ return norms.indexOf(t) !== -1; })) {
       results.push({ lead: l, type: "exact" }); return;
     }
     if (l.notes && extractPhones(l.notes).indexOf(norm) !== -1) {
@@ -1011,9 +1062,11 @@ function findExistingMatch(fields, leads) {
     var byName = leads.find(function(l){ return (l.projectName || "").trim().toLowerCase() === name; });
     if (byName) return byName;
   }
-  var ph = normalizePhone(fields.phone || "");
-  if (ph && ph.length >= 6) {
-    var byPhone = leads.find(function(l){ return l.phone && normalizePhone(l.phone) === ph; });
+  var phs = phonesIn(fields.phone || "");
+  if (phs.length) {
+    var byPhone = leads.find(function(l){
+      return phonesIn(l.phone).some(function(t){ return phs.indexOf(t) !== -1; });
+    });
     if (byPhone) return byPhone;
   }
   return null;
