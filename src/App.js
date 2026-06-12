@@ -663,6 +663,45 @@ function AddForm(props) {
   );
 }
 
+function LogEntryRow(props) {
+  // One call/meeting log entry with inline edit + delete.
+  var e = props.entry;
+  var [editing, setEditing] = useState(false);
+  var [eDate, setEDate] = useState(e.date || "");
+  var [eNote, setENote] = useState(e.note || "");
+  var color = props.color;
+  if (editing) {
+    return (
+      <div style={{ marginBottom:10, padding:"8px 12px", background:CARD2, borderRadius:6, borderLeft:"3px solid "+color }}>
+        <input type="date" value={eDate} onChange={function(ev){ setEDate(ev.target.value); }}
+          style={{ background:INP, border:"1px solid "+BORDER, borderRadius:5, padding:"4px 8px", color:CREAM, fontSize:12, outline:"none", marginBottom:6 }}/>
+        <textarea value={eNote} onChange={function(ev){ setENote(ev.target.value); }} rows={2}
+          style={{ width:"100%", boxSizing:"border-box", background:INP, border:"1px solid "+BORDER, borderRadius:5, padding:"6px 8px", color:CREAM, fontSize:13, resize:"vertical" }}/>
+        <div style={{ display:"flex", gap:6, justifyContent:"flex-end", marginTop:6 }}>
+          <button onClick={function(){ setEditing(false); setEDate(e.date||""); setENote(e.note||""); }}
+            style={{ padding:"4px 10px", borderRadius:5, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:11 }}>Cancel</button>
+          <button onClick={function(){ if (!eNote.trim()) return; props.onEdit(e, { date: eDate || e.date, note: eNote.trim() }); setEditing(false); }}
+            style={{ padding:"4px 12px", borderRadius:5, border:"none", background:color, color:"#fff", cursor:"pointer", fontSize:11, fontWeight:700 }}>Save</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginBottom:10, padding:"8px 12px", background:CARD2, borderRadius:6, borderLeft:"3px solid "+color }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:3 }}>
+        <span style={{ fontSize:11, color:MUTED }}>{e.date}</span>
+        <span style={{ display:"flex", gap:8 }}>
+          <button title="Edit" onClick={function(){ setEditing(true); }}
+            style={{ background:"none", border:"none", color:MUTED, cursor:"pointer", fontSize:13, padding:0 }}>✎</button>
+          <button title="Delete" onClick={function(){ if (window.confirm("Delete this entry?")) props.onDelete(e); }}
+            style={{ background:"none", border:"none", color:"#ef4444", cursor:"pointer", fontSize:13, padding:0 }}>✕</button>
+        </span>
+      </div>
+      <div style={{ fontSize:13, color:CREAM, whiteSpace:"pre-wrap" }}>{e.note}</div>
+    </div>
+  );
+}
+
 function CallLogModal(props) {
   var lead = props.lead;
   var [note, setNote] = useState("");
@@ -693,12 +732,8 @@ function CallLogModal(props) {
         <div style={{ flex:1, overflowY:"auto", padding:16 }}>
           {lead.callLog && lead.callLog.length > 0
             ? lead.callLog.slice().reverse().map(function(e,i){
-                return (
-                  <div key={i} style={{ marginBottom:10, padding:"8px 12px", background:CARD2, borderRadius:6, borderLeft:"3px solid "+GOLD }}>
-                    <div style={{ fontSize:11, color:MUTED, marginBottom:3 }}>{e.date}</div>
-                    <div style={{ fontSize:13, color:CREAM }}>{e.note}</div>
-                  </div>
-                );
+                return <LogEntryRow key={e.date + "|" + e.note} entry={e} color={GOLD}
+                  onEdit={props.onEditEntry} onDelete={function(entry){ props.onEditEntry(entry, null); }}/>;
               })
             : <div style={{ color:MUTED, fontSize:13, textAlign:"center", padding:20 }}>No calls logged yet</div>
           }
@@ -747,12 +782,8 @@ function MeetingLogModal(props) {
         <div style={{ flex:1, overflowY:"auto", padding:16 }}>
           {lead.meetingLog && lead.meetingLog.length > 0
             ? lead.meetingLog.slice().reverse().map(function(e,i){
-                return (
-                  <div key={i} style={{ marginBottom:10, padding:"8px 12px", background:CARD2, borderRadius:6, borderLeft:"3px solid #3b82f6" }}>
-                    <div style={{ fontSize:11, color:MUTED, marginBottom:3 }}>{e.date}</div>
-                    <div style={{ fontSize:13, color:CREAM }}>{e.note}</div>
-                  </div>
-                );
+                return <LogEntryRow key={e.date + "|" + e.note} entry={e} color={"#3b82f6"}
+                  onEdit={props.onEditEntry} onDelete={function(entry){ props.onEditEntry(entry, null); }}/>;
               })
             : <div style={{ color:MUTED, fontSize:13, textAlign:"center", padding:20 }}>No meetings logged yet</div>
           }
@@ -2124,6 +2155,37 @@ function AppInner() {
     });
   }
 
+  // Edit (updated != null) or delete (updated == null) a call/meeting log entry.
+  // Mirrors the add behavior: applies to all projects sharing the promoteurKey.
+  async function mutateLogEntry(field, modalLead, setModalLead, orig, updated) {
+    var pKey = modalLead.promoteurKey;
+    var syncAll = pKey && pKey.length > 2;
+    var targets = syncAll
+      ? leads.filter(function(l){ return l.promoteurKey === pKey; })
+      : leads.filter(function(l){ return String(l.id) === String(modalLead.id); });
+    try {
+      var batch = writeBatch(db);
+      targets.forEach(function(l){
+        var arr = (l[field] || []);
+        var idx = arr.findIndex(function(e){ return e.date === orig.date && e.note === orig.note; });
+        if (idx === -1) return;
+        var next = arr.slice();
+        if (updated) next[idx] = updated; else next.splice(idx, 1);
+        var patch = {}; patch[field] = next;
+        batch.update(doc(db, "leads", String(l.id)), patch);
+      });
+      await batch.commit();
+    } catch(e) { console.error("Log edit failed:", e); }
+    setModalLead(function(prev){
+      if (!prev) return prev;
+      var arr = (prev[field] || []).slice();
+      var idx = arr.findIndex(function(e){ return e.date === orig.date && e.note === orig.note; });
+      if (idx !== -1) { if (updated) arr[idx] = updated; else arr.splice(idx, 1); }
+      var nextLead = { ...prev }; nextLead[field] = arr;
+      return nextLead;
+    });
+  }
+
   // ── Loading screen ─────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -2413,6 +2475,7 @@ function AppInner() {
           lead={callLogLead}
           allLeads={leads}
           onAdd={addCallEntry}
+          onEditEntry={function(orig, updated){ mutateLogEntry("callLog", callLogLead, setCallLogLead, orig, updated); }}
           onClose={function(){ setCallLogLead(null); }}
         />
       )}
@@ -2421,6 +2484,7 @@ function AppInner() {
           lead={meetingLogLead}
           allLeads={leads}
           onAdd={addMeetingEntry}
+          onEditEntry={function(orig, updated){ mutateLogEntry("meetingLog", meetingLogLead, setMeetingLogLead, orig, updated); }}
           onClose={function(){ setMeetingLogLead(null); }}
         />
       )}
