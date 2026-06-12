@@ -95,7 +95,10 @@ cmd /c "set JAVA_HOME=D:\Android\jdk17&& set GRADLE_USER_HOME=D:\Android\gradle-
 
 - SDK: `D:\Android\sdk` (platform-34, build-tools 34.0.0). Output:
   `android/app/build/outputs/apk/release/app-release.apk`.
-- **Bump `versionCode`/`versionName`** in `android/app/build.gradle` for every release.
+- **Release checklist (every APK):** bump `versionCode`/`versionName` in
+  `android/app/build.gradle` **and** in `public/app-version.json` (the in-app updater
+  compares the installed versionCode against this file and shows an "Update available"
+  banner → DownloadManager → system installer; v1.5+).
 - **Signing:** keystore at `C:\Users\axeln\OneDrive\SynRegis\keys\synregis-release.keystore`
   (alias `synregis`; password in the README.txt beside it — OneDrive-synced backup).
   `android/keystore.properties` (gitignored) points to it. Losing the key only means

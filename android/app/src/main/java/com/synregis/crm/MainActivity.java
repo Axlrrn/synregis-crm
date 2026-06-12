@@ -1,7 +1,11 @@
 package com.synregis.crm;
 
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
 import android.net.Uri;
@@ -97,6 +101,52 @@ public class MainActivity extends Activity {
                         .putString("notif_payload", json)
                         .apply();
                 NotificationHelper.scheduleNext(MainActivity.this);
+            } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            try {
+                return String.valueOf(getPackageManager()
+                        .getPackageInfo(getPackageName(), 0).versionCode);
+            } catch (Exception e) {
+                return "0";
+            }
+        }
+
+        // Self-update: download the APK and hand it to the system installer.
+        @JavascriptInterface
+        public void installUpdate(String url) {
+            try {
+                final DownloadManager dm = getSystemService(DownloadManager.class);
+                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                req.setTitle("SynRegis CRM — mise à jour");
+                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
+                req.setMimeType("application/vnd.android.package-archive");
+                final long id = dm.enqueue(req);
+                BroadcastReceiver onDone = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context c, Intent i) {
+                        if (i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != id) return;
+                        try {
+                            Uri apk = dm.getUriForDownloadedFile(id);
+                            if (apk != null) {
+                                Intent install = new Intent(Intent.ACTION_VIEW);
+                                install.setDataAndType(apk, "application/vnd.android.package-archive");
+                                install.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                        | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                startActivity(install);
+                            }
+                        } catch (Exception ignored) {}
+                        try { unregisterReceiver(this); } catch (Exception ignored) {}
+                    }
+                };
+                if (Build.VERSION.SDK_INT >= 33) {
+                    registerReceiver(onDone, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                            Context.RECEIVER_EXPORTED);
+                } else {
+                    registerReceiver(onDone, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+                }
             } catch (Exception ignored) {}
         }
 

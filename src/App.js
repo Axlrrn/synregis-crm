@@ -1742,6 +1742,7 @@ function AppInner() {
   var [settings, setSettings]             = useState(loadSettings);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
+  var [appUpdate, setAppUpdate]           = useState(null); // {versionName, url} when a newer APK exists
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
   var [sharedImg, setSharedImg]           = useState(null);   // image shared from the Android app
   var [addPrefill, setAddPrefill]         = useState(null);
@@ -1754,6 +1755,21 @@ function AppInner() {
   useEffect(function() {
     var t = setTimeout(function() { setShowSplash(false); }, 2500);
     return function() { clearTimeout(t); };
+  }, []);
+
+  // ── App self-update check (Android wrapper only) ──────────────────────────
+  useEffect(function() {
+    if (!window.SynRegisNative || !window.SynRegisNative.getAppVersion) return;
+    var installed = 0;
+    try { installed = parseInt(window.SynRegisNative.getAppVersion(), 10) || 0; } catch(e) { return; }
+    fetch("/app-version.json?t=" + Date.now(), { cache: "no-store" })
+      .then(function(r){ return r.json(); })
+      .then(function(v){
+        if (v && v.versionCode > installed) {
+          setAppUpdate({ versionName: v.versionName || String(v.versionCode), url: v.url });
+        }
+      })
+      .catch(function(){});
   }, []);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
@@ -2158,6 +2174,26 @@ function AppInner() {
           <path d="M0,18 C160,52 320,0 480,26 C640,52 800,4 960,28 C1120,52 1280,8 1440,30 L1440,56 L0,56 Z" fill={CARD}/>
         </svg>
       </div>
+
+      {/* App update banner (Android wrapper) */}
+      {appUpdate && (
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 16px", background:GOLD+"22",
+          borderBottom:"1px solid "+GOLD+"55", flexShrink:0 }}>
+          <span style={{ flex:1, fontSize:12, color:GOLD, fontWeight:600 }}>
+            Mise à jour disponible (v{appUpdate.versionName})
+          </span>
+          <button onClick={function(){
+              try { window.SynRegisNative.installUpdate(appUpdate.url); } catch(e) {}
+              setAppUpdate(null);
+            }}
+            style={{ padding:"5px 14px", borderRadius:6, border:"none", background:GOLD, color:NAVY,
+              cursor:"pointer", fontSize:12, fontWeight:700, flexShrink:0 }}>
+            Mettre à jour
+          </button>
+          <button onClick={function(){ setAppUpdate(null); }}
+            style={{ background:"none", border:"none", color:MUTED, cursor:"pointer", fontSize:14, flexShrink:0 }}>✕</button>
+        </div>
+      )}
 
       {/* Stage filter bar */}
       <div style={{ display:"flex", gap:6, padding:"10px 16px", flexShrink:0, overflowX:"auto", background:CARD }}>
