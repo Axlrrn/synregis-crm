@@ -47,7 +47,7 @@ const INP    = "#091525";
 const PIPELINE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence","Won","Lost","On Hold","Unwanted"];
 const DEFAULT_REGIONS = ["North-West","North-Center","North-East","South-West","South-Center","South-East","Center-West","Center-East"];
 const PROJECT_STAGES  = ["Pre-Launch/Off-Plan","Permitting & Planning","Under Construction","Finishing Works","Near Delivery","Delivered & Occupied","Stalled/Suspended"];
-const PRIORITIES      = ["Top Priority"];
+const PRIORITIES      = ["Top Priority", "High", "Warm", "Cold", "Inbound Only"];
 
 const PC = {
   "Prospecting":"#6b7280","Proposal Sent":"#3b82f6","Negotiation":"#8b5cf6",
@@ -894,6 +894,106 @@ function DetailPanel(props) {
   );
 }
 
+var FILTER_PRIORITIES = PRIORITIES;
+var MISSING_FIELDS = [
+  { key: "promoteur",    label: "No promoteur" },
+  { key: "contactName",  label: "No contact name" },
+  { key: "phone",        label: "No phone" },
+  { key: "region",       label: "No region" },
+  { key: "nextFollowUp", label: "No follow-up date" },
+  { key: "units",        label: "No units info" },
+  { key: "gpsCoords",    label: "No GPS" },
+];
+
+function FilterMenu(props) {
+  // Hierarchical dropdown: categories → submenu with options.
+  var [view, setView] = useState("root");
+  useEffect(function(){ if (props.open) setView("root"); }, [props.open]);
+  if (!props.open) return null;
+
+  var v = props.values;
+  var cats = [
+    { id:"priority", label:"Priority",           current: v.priority, options: FILTER_PRIORITIES },
+    { id:"stage",    label:"Construction Stage", current: v.stage,    options: PROJECT_STAGES },
+    { id:"region",   label:"Region",             current: v.region,   options: props.regions },
+    { id:"missing",  label:"Missing info",       current: v.missing === "All" ? "All" : (MISSING_FIELDS.find(function(m){ return m.key === v.missing; }) || {}).label,
+      options: MISSING_FIELDS.map(function(m){ return m.label; }) },
+  ];
+  function optionValue(catId, label) {
+    if (catId !== "missing") return label;
+    var m = MISSING_FIELDS.find(function(x){ return x.label === label; });
+    return m ? m.key : "All";
+  }
+  function countFor(catId, label) {
+    var value = optionValue(catId, label);
+    return props.leads.filter(function(l){
+      if (l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted") return false;
+      if (catId === "priority") return l.priority === value;
+      if (catId === "stage")    return l.projectStage === value;
+      if (catId === "region")   return l.region === value;
+      return !String(l[value] || "").trim();
+    }).length;
+  }
+
+  var panel = { position:"absolute", top:"100%", left:0, marginTop:4, width:262, maxHeight:330, overflowY:"auto",
+    background:CARD2, border:"1px solid "+BORDER, borderRadius:8, zIndex:950, boxShadow:"0 8px 30px rgba(0,0,0,0.5)" };
+  var row = { display:"flex", alignItems:"center", justifyContent:"space-between", padding:"11px 14px",
+    cursor:"pointer", borderBottom:"1px solid "+BORDER+"66", fontSize:13, color:CREAM };
+  var cat = cats.find(function(c){ return c.id === view; });
+
+  return (
+    <>
+      <div onClick={props.onClose} style={{ position:"fixed", inset:0, zIndex:940 }}/>
+      <div style={panel}>
+        {view === "root" ? (
+          <>
+            {cats.map(function(c){
+              var active = c.current && c.current !== "All";
+              return (
+                <div key={c.id} style={row} onClick={function(){ setView(c.id); }}>
+                  <span>{c.label}</span>
+                  <span style={{ color: active ? GOLD : MUTED, fontSize:12, display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ maxWidth:110, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {active ? c.current : "All"}
+                    </span>
+                    ›
+                  </span>
+                </div>
+              );
+            })}
+            <div style={{ ...row, borderBottom:"none", color:MUTED, fontSize:12, justifyContent:"center" }}
+              onClick={function(){ props.onChange("clearAll"); props.onClose(); }}>
+              Clear all filters
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ ...row, color:GOLD, fontWeight:700 }} onClick={function(){ setView("root"); }}>
+              <span>‹ {cat.label}</span>
+            </div>
+            <div style={{ ...row, fontWeight: (cat.current === "All" || !cat.current) ? 700 : 400 }}
+              onClick={function(){ props.onChange(view, "All"); props.onClose(); }}>
+              <span>All</span>
+              {(cat.current === "All" || !cat.current) && <span style={{ color:GOLD }}>✓</span>}
+            </div>
+            {cat.options.map(function(opt){
+              var value = optionValue(view, opt);
+              var selected = view === "missing" ? v.missing === value : cat.current === opt;
+              return (
+                <div key={opt} style={{ ...row, fontWeight: selected ? 700 : 400 }}
+                  onClick={function(){ props.onChange(view, value); props.onClose(); }}>
+                  <span>{opt} <span style={{ color:MUTED, fontSize:11 }}>({countFor(view, opt)})</span></span>
+                  {selected && <span style={{ color:GOLD }}>✓</span>}
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 function PasteLeadModal(props) {
   var [text, setText] = useState(props.initialText || "");
   var [img, setImg] = useState(props.initialImage || null); // {mimeType, data, preview}
@@ -1416,6 +1516,9 @@ function AppInner() {
   var [search, setSearch]             = useState("");
   var [filterPipeline, setFilterPipeline] = useState("All");
   var [filterPriority, setFilterPriority] = useState("All");
+  var [filterStage, setFilterStage]       = useState("All");
+  var [filterMissing, setFilterMissing]   = useState("All");
+  var [showFilters, setShowFilters]       = useState(false);
   var [showArchive, setShowArchive] = useState(false);
   var [showAdd, setShowAdd]           = useState(false);
   var [editLead, setEditLead]         = useState(null);
@@ -1602,6 +1705,7 @@ function AppInner() {
   // history. Back pops the sentinel → we close the top-most layer and re-arm
   // if layers remain. Closing everything via the UI consumes the sentinel.
   var layers = [];
+  if (showFilters) layers.push(function(){ setShowFilters(false); });
   if (showPaste !== null) layers.push(function(){ setShowPaste(null); setSharedImg(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
   if (showEditRegions)  layers.push(function(){ setShowEditRegions(false); });
@@ -1645,12 +1749,29 @@ function AppInner() {
     var q = search.toLowerCase();
     var matchQ = !q || l.projectName.toLowerCase().includes(q) || l.promoteur.toLowerCase().includes(q) || (l.location||"").toLowerCase().includes(q);
     var matchP = filterPipeline === "All" || l.pipelineStage === filterPipeline;
-    var matchR   = filterPriority === "All" || l.priority === filterPriority || l.projectStage === filterPriority;
+    var matchPr  = filterPriority === "All" || l.priority === filterPriority;
+    var matchSt  = filterStage === "All" || l.projectStage === filterStage;
     var matchReg = filterRegion === "All" || l.region === filterRegion;
+    var matchMiss = filterMissing === "All" || !String(l[filterMissing] || "").trim();
     var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
     if (showArchive) return archived && matchQ;
-    return !archived && matchQ && matchP && matchR && matchReg;
+    return !archived && matchQ && matchP && matchPr && matchSt && matchReg && matchMiss;
   });
+
+  function setFilter(category, value) {
+    if (category === "clearAll") {
+      setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All");
+    }
+    else if (category === "priority") setFilterPriority(value);
+    else if (category === "stage")    setFilterStage(value);
+    else if (category === "region")   setFilterRegion(value);
+    else if (category === "missing")  setFilterMissing(value);
+  }
+  var activeFilters = [];
+  if (filterPriority !== "All") activeFilters.push({ cat:"priority", label: filterPriority });
+  if (filterStage !== "All")    activeFilters.push({ cat:"stage",    label: filterStage });
+  if (filterRegion !== "All")   activeFilters.push({ cat:"region",   label: filterRegion });
+  if (filterMissing !== "All")  activeFilters.push({ cat:"missing",  label: (MISSING_FIELDS.find(function(m){ return m.key === filterMissing; }) || { label: filterMissing }).label });
 
   var counts = {};
   PIPELINE_STAGES.forEach(function(s) {
@@ -1765,8 +1886,6 @@ function AppInner() {
     );
   }
 
-  var dropSt = { background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"7px 10px", color:CREAM, fontSize:12, outline:"none" };
-
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
@@ -1829,15 +1948,20 @@ function AppInner() {
               placeholder="Search projects..."
               style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"7px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
             <div style={{ display:"flex", gap:6 }}>
-              <select value={filterPriority} onChange={function(e){setFilterPriority(e.target.value);}} style={{...dropSt, flex:1, minWidth:0}}>
-                <option value="All">All</option>
-                <optgroup label="Priority">
-                  {PRIORITIES.map(function(p){ return <option key={p} value={p}>{p}</option>; })}
-                </optgroup>
-                <optgroup label="Construction Stage">
-                  {PROJECT_STAGES.map(function(s){ return <option key={s} value={s}>{s}</option>; })}
-                </optgroup>
-              </select>
+              <div style={{ position:"relative", flex:1, minWidth:0 }}>
+                <button onClick={function(){ setShowFilters(!showFilters); }}
+                  style={{ width:"100%", padding:"7px 10px", borderRadius:6, textAlign:"left",
+                    border:"1px solid "+(activeFilters.length?GOLD+"88":BORDER),
+                    background:CARD2, color:activeFilters.length?GOLD:CREAM, cursor:"pointer", fontSize:12,
+                    display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span>Filters{activeFilters.length ? " (" + activeFilters.length + ")" : ""}</span>
+                  <span style={{ color:MUTED }}>▾</span>
+                </button>
+                <FilterMenu open={showFilters} onClose={function(){ setShowFilters(false); }}
+                  leads={leads} regions={regions}
+                  values={{ priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing }}
+                  onChange={setFilter}/>
+              </div>
               <button onClick={function(){ setAddPrefill(null); setShowAdd(true); }}
                 style={{ padding:"7px 12px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0 }}>
                 + Add
@@ -1852,15 +1976,24 @@ function AppInner() {
                 {showArchive ? "← Pipeline" : "Archive"}
               </button>
             </div>
+            {activeFilters.length > 0 && (
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {activeFilters.map(function(f){
+                  return (
+                    <span key={f.cat} onClick={function(){ setFilter(f.cat, "All"); }}
+                      style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"3px 9px", borderRadius:99,
+                        background:GOLD+"22", border:"1px solid "+GOLD+"55", color:GOLD, fontSize:11, cursor:"pointer" }}>
+                      {f.label} ✕
+                    </span>
+                  );
+                })}
+              </div>
+            )}
             <div style={{ display:"flex", gap:6 }}>
-              <select value={filterRegion} onChange={function(e){setFilterRegion(e.target.value);}} style={{...dropSt,flex:1}}>
-                <option value="All">All Regions</option>
-                {regions.map(function(r){ return <option key={r} value={r}>{r}</option>; })}
-              </select>
               <button onClick={function(){ setGroupByProm(!groupByProm); }}
                 title="Group projects by promoteur"
-                style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+(groupByProm?GOLD:BORDER), background:groupByProm?GOLD:CARD2, color:groupByProm?NAVY:MUTED, cursor:"pointer", fontSize:11, fontWeight:groupByProm?700:400, flexShrink:0 }}>
-                Group
+                style={{ flex:1, padding:"7px 10px", borderRadius:6, border:"1px solid "+(groupByProm?GOLD:BORDER), background:groupByProm?GOLD:CARD2, color:groupByProm?NAVY:MUTED, cursor:"pointer", fontSize:11, fontWeight:groupByProm?700:400 }}>
+                Group by promoteur
               </button>
               <button onClick={function(){ setShowEditRegions(true); }}
                 style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:MUTED, cursor:"pointer", fontSize:11, flexShrink:0 }}>
