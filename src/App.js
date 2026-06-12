@@ -943,10 +943,11 @@ function DetailPanel(props) {
 
       {lead.callLog && lead.callLog.length > 0 && (
         <div style={sec}>
-          <div style={lbl}>Recent Calls ({lead.callLog.length})</div>
+          <div style={lbl}>Recent Calls ({lead.callLog.length}) — tap an entry to view / edit all</div>
           {lead.callLog.slice(-3).reverse().map(function(e,i){
             return (
-              <div key={i} style={{ padding:"7px 10px", background:CARD2, borderRadius:5, borderLeft:"3px solid "+GOLD, marginBottom:6 }}>
+              <div key={i} onClick={function(){ props.onCallLog(lead); }}
+                style={{ padding:"7px 10px", background:CARD2, borderRadius:5, borderLeft:"3px solid "+GOLD, marginBottom:6, cursor:"pointer" }}>
                 <span style={{ fontSize:11, color:MUTED }}>{e.date} </span>
                 <span style={{ fontSize:12, color:CREAM }}>{e.note}</span>
               </div>
@@ -957,10 +958,11 @@ function DetailPanel(props) {
 
       {lead.meetingLog && lead.meetingLog.length > 0 && (
         <div style={sec}>
-          <div style={lbl}>Recent Meetings ({lead.meetingLog.length})</div>
+          <div style={lbl}>Recent Meetings ({lead.meetingLog.length}) — tap an entry to view / edit all</div>
           {lead.meetingLog.slice(-3).reverse().map(function(e,i){
             return (
-              <div key={i} style={{ padding:"7px 10px", background:CARD2, borderRadius:5, borderLeft:"3px solid #3b82f6", marginBottom:6 }}>
+              <div key={i} onClick={function(){ props.onMeetingLog(lead); }}
+                style={{ padding:"7px 10px", background:CARD2, borderRadius:5, borderLeft:"3px solid #3b82f6", marginBottom:6, cursor:"pointer" }}>
                 <span style={{ fontSize:11, color:MUTED }}>{e.date} </span>
                 <span style={{ fontSize:12, color:CREAM }}>{e.note}</span>
               </div>
