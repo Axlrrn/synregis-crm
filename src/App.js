@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, browserLocalPersistence, setPersistence,
-  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword } from "firebase/auth";
+  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword, sendPasswordResetEmail } from "firebase/auth";
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -1257,6 +1257,15 @@ function Gate(props) {
       setAuthError(e && e.message ? e.message : String(e));
     });
   }
+  function doForgotPassword() {
+    setAuthError("");
+    if (!email.trim()) { setAuthError("Enter your email first."); return; }
+    sendPasswordResetEmail(auth, email.trim()).then(function(){
+      setAuthError("Reset link sent — check your inbox (" + email.trim() + "), set a new password, then sign in here.");
+    }).catch(function(e){
+      setAuthError(e && e.message ? e.message : String(e));
+    });
+  }
   function doEmailSignIn() {
     setAuthError("");
     if (!email.trim() || !pw) { setAuthError("Enter email and password."); return; }
@@ -1309,6 +1318,10 @@ function Gate(props) {
         <button style={Object.assign({}, btn, inApp ? {} : { background:"transparent", color:GOLD, border:"1px solid "+GOLD+"66" })}
           onClick={doEmailSignIn}>
           Sign in with password
+        </button>
+        <button onClick={doForgotPassword}
+          style={{ background:"none", border:"none", color:MUTED, cursor:"pointer", marginTop:12, fontSize:12, textDecoration:"underline" }}>
+          Forgot password?
         </button>
         {authError ? <p style={err}>{authError}</p> : null}
       </div></div>
