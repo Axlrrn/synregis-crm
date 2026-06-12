@@ -545,11 +545,16 @@ function AddForm(props) {
     region:"", gpsCoords:"", attachments:[]
   };
   var [form, setForm] = useState(function(){ return Object.assign({}, blank, props.initial || {}); });
+  var [formError, setFormError] = useState("");
   function f(k) { return function(v){ setForm(function(p){ return {...p,[k]:v}; }); }; }
   var ovl = { position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" };
   var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"92%", maxWidth:560, maxHeight:"92vh", display:"flex", flexDirection:"column", overflow:"hidden" };
   function submit() {
-    if (!form.projectName.trim()) return;
+    if (!form.projectName.trim()) {
+      setFormError("Project Name is required — scroll up and give this lead a name.");
+      return;
+    }
+    setFormError("");
     props.onAdd({...form, createdAt: new Date().toISOString().split("T")[0]});
   }
   return (
@@ -574,9 +579,12 @@ function AddForm(props) {
           <Fld label="GPS Coordinates" value={form.gpsCoords||""} onChange={f("gpsCoords")}/>
           <Fld label="Notes" value={form.notes} onChange={f("notes")} type="textarea"/>
         </div>
-        <div style={{ padding:"14px 20px", borderTop:"1px solid "+BORDER, flexShrink:0, display:"flex", gap:10, justifyContent:"flex-end" }}>
-          <button style={{ padding:"8px 20px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:13 }} onClick={props.onCancel}>Cancel</button>
-          <button style={{ padding:"8px 20px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700 }} onClick={submit}>Add Lead</button>
+        <div style={{ padding:"14px 20px", borderTop:"1px solid "+BORDER, flexShrink:0 }}>
+          {formError && <div style={{ fontSize:12, color:"#ef4444", marginBottom:8, textAlign:"right" }}>{formError}</div>}
+          <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+            <button style={{ padding:"8px 20px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:13 }} onClick={props.onCancel}>Cancel</button>
+            <button style={{ padding:"8px 20px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700 }} onClick={submit}>Add Lead</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1437,8 +1445,13 @@ function AppInner() {
     var f = fields || {};
     var promoteur = (f.promoteur || "").trim();
     var region = (f.region || "").trim();
+    // Many small-promoteur ads have no project name — compose one so the form is submittable
+    var projectName = (f.projectName || "").trim();
+    if (!projectName) {
+      projectName = [promoteur, (f.location || "").trim()].filter(Boolean).join(" – ");
+    }
     setAddPrefill({
-      projectName: (f.projectName || "").trim(),
+      projectName: projectName,
       location: (f.location || "").trim(),
       promoteur: promoteur,
       promoteurKey: promoteur.toLowerCase(),
