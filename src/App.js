@@ -104,15 +104,17 @@ var GEMINI_MODELS = ["gemini-flash-latest", "gemini-3-flash", "gemini-2.5-flash"
 async function extractLeadWithAI(text, image, apiKey, regions, existingLeads) {
   var prompt =
     "You extract real-estate lead data for a property CRM in Mauritius. " +
-    "From the announcement/ad below (text and/or a screenshot image), extract these fields and reply with ONLY a JSON object (no markdown):\n" +
+    "The input below (text and/or a screenshot image) may describe ONE project or SEVERAL distinct projects. " +
+    'Reply with ONLY a JSON object (no markdown): {"projects": [ ...one entry per distinct project... ]}\n' +
+    "Each project entry:\n" +
     '{"projectName": string, "location": string, "promoteur": string (developer/company), ' +
     '"contactName": string (person name if mentioned), "phone": string (as written, first number if several), ' +
     '"units": string (total units, e.g. \'24 units\'), "unitDetails": string (unit types/sizes/prices breakdown), ' +
     '"amenities": string (comma-separated), ' +
     '"region": string (one of: ' + regions.join(", ") + " — pick the best match for the location, or empty if unsure), " +
-    '"notes": string (anything else useful: prices, delivery dates, syndic fees, website, source), ' +
-    '"existingId": string (if this announcement clearly refers to one of the EXISTING PIPELINE PROJECTS listed below — same project, even with spelling differences — put its id; otherwise empty string)}\n' +
-    "Use an empty string for unknown fields. Never invent data.";
+    '"notes": string (anything else useful for THIS project: prices, delivery dates, syndic fees, website, source), ' +
+    '"existingId": string (if this project clearly is one of the EXISTING PIPELINE PROJECTS listed below — same project, even with spelling differences — put its id; otherwise empty string)}\n' +
+    "Never merge different projects into one entry. Use an empty string for unknown fields. Never invent data.";
   if (existingLeads && existingLeads.length) {
     prompt += "\n\nEXISTING PIPELINE PROJECTS (id | name | promoteur | location):\n" +
       existingLeads.map(function(l){
@@ -147,9 +149,72 @@ async function extractLeadWithAI(text, image, apiKey, regions, existingLeads) {
     var out = data && data.candidates && data.candidates[0] && data.candidates[0].content &&
       data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
     if (!out) throw new Error("Empty response from Gemini.");
-    return JSON.parse(out);
+    var parsed = JSON.parse(out);
+    // Always return an array of project entries, whatever shape the model chose
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && Array.isArray(parsed.projects)) return parsed.projects;
+    return [parsed];
   }
   throw lastError || new Error("Extraction failed.");
+}
+
+// Merge AI-extracted fields into an existing lead: fill blanks, never overwrite;
+// new/conflicting info goes to notes under a dated header.
+function mergeExtractedIntoLead(lead, f, rawText, regionsList) {
+  var merged = { ...lead };
+  var fillable = ["location", "promoteur", "contactName", "phone", "units", "unitDetails", "amenities"];
+  var conflicts = [];
+  fillable.forEach(function(k){
+    var nv = ((f && f[k]) || "").trim();
+    if (!nv) return;
+    if (!String(merged[k] || "").trim()) merged[k] = nv;
+    else if (nv.toLowerCase() !== String(merged[k]).trim().toLowerCase()) conflicts.push(k + ": " + nv);
+  });
+  var region = ((f && f.region) || "").trim();
+  if (!String(merged.region || "").trim() && (regionsList || []).indexOf(region) !== -1) merged.region = region;
+  if (merged.promoteur && !String(merged.promoteurKey || "").trim()) {
+    merged.promoteurKey = merged.promoteur.toLowerCase();
+    merged.promoteurFull = merged.promoteur;
+  }
+  var today = new Date().toISOString().split("T")[0];
+  var block = "--- AI update " + today + " ---";
+  if (conflicts.length) block += "\nNew values seen (kept yours): " + conflicts.join(" | ");
+  if (((f && f.notes) || "").trim()) block += "\n" + f.notes.trim();
+  if ((rawText || "").trim()) block += "\nSource:\n" + rawText.trim();
+  merged.notes = (String(merged.notes || "").trim() ? merged.notes + "\n\n" : "") + block;
+  return merged;
+}
+
+// Build a complete new lead document from AI-extracted fields.
+function buildLeadFromExtracted(f, regionsList) {
+  f = f || {};
+  var promoteur = (f.promoteur || "").trim();
+  var region = (f.region || "").trim();
+  var projectName = (f.projectName || "").trim() ||
+    [promoteur, (f.location || "").trim()].filter(Boolean).join(" – ") || "Unnamed project";
+  var today = new Date().toISOString().split("T")[0];
+  return {
+    projectName: projectName,
+    location: (f.location || "").trim(),
+    promoteur: promoteur,
+    promoteurKey: promoteur.toLowerCase(),
+    promoteurFull: promoteur,
+    contactName: (f.contactName || "").trim(),
+    phone: (f.phone || "").trim(),
+    units: (f.units || "").trim(),
+    unitDetails: (f.unitDetails || "").trim(),
+    amenities: (f.amenities || "").trim(),
+    projectStage: PROJECT_STAGES[0],
+    pipelineStage: "Prospecting",
+    priority: "",
+    notes: ((f.notes || "").trim() ? "--- AI import " + today + " ---\n" + f.notes.trim() : ""),
+    callLog: [],
+    nextFollowUp: "",
+    createdAt: today,
+    region: (regionsList || []).indexOf(region) !== -1 ? region : "",
+    gpsCoords: "",
+    attachments: [],
+  };
 }
 
 // ── Responsive helper ─────────────────────────────────────────────────────────
@@ -1027,6 +1092,7 @@ function PasteLeadModal(props) {
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
   var [pending, setPending] = useState(null); // {fields, lead} when an existing project matched
+  var [batch, setBatch] = useState(null);     // [{fields, match, include}] when several projects found
   var fileRef = useRef(null);
   var hasKey = !!(props.geminiKey && props.geminiKey.trim());
   var canAnalyse = (text.trim() || img) && hasKey && !busy;
@@ -1055,14 +1121,35 @@ function PasteLeadModal(props) {
     if (!canAnalyse) return;
     setError(""); setBusy(true);
     try {
-      var fields = await extractLeadWithAI(text, img, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS, props.allLeads);
-      var match = findExistingMatch(fields, props.allLeads);
-      if (match) {
-        setPending({ fields: fields, lead: match });
-        setBusy(false);
+      var projects = await extractLeadWithAI(text, img, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS, props.allLeads);
+      projects = (projects || []).filter(function(p){
+        return p && ((p.projectName || "").trim() || (p.promoteur || "").trim() || (p.location || "").trim() || (p.phone || "").trim());
+      });
+      if (!projects.length) throw new Error("No project found in the text/image.");
+      if (projects.length === 1) {
+        var match = findExistingMatch(projects[0], props.allLeads);
+        if (match) {
+          setPending({ fields: projects[0], lead: match });
+          setBusy(false);
+        } else {
+          props.onExtracted(projects[0], text);
+        }
       } else {
-        props.onExtracted(fields, text);
+        setBatch(projects.map(function(p){
+          return { fields: p, match: findExistingMatch(p, props.allLeads), include: true };
+        }));
+        setBusy(false);
       }
+    } catch(e) {
+      setError(e && e.message ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+  async function applyBatch() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      await props.onBatchApply(batch.filter(function(b){ return b.include; }));
     } catch(e) {
       setError(e && e.message ? e.message : String(e));
       setBusy(false);
@@ -1076,7 +1163,61 @@ function PasteLeadModal(props) {
         <div style={{ padding:"16px 20px", borderBottom:"1px solid "+BORDER, color:GOLD, fontWeight:700 }}>
           ✨ New Lead from Text or Screenshot
         </div>
-        {pending ? (
+        {batch ? (
+          <div style={{ padding:16 }}>
+            <div style={{ fontSize:13, color:CREAM, lineHeight:1.6, marginBottom:10 }}>
+              Found <b style={{ color:GOLD }}>{batch.length} projects</b> — review and apply:
+            </div>
+            <div style={{ maxHeight:280, overflowY:"auto", marginBottom:12 }}>
+              {batch.map(function(item, i){
+                var name = (item.fields.projectName || "").trim() ||
+                  [(item.fields.promoteur || "").trim(), (item.fields.location || "").trim()].filter(Boolean).join(" – ") || "Unnamed";
+                return (
+                  <div key={i} onClick={function(){
+                      setBatch(batch.map(function(b, j){ return j === i ? { ...b, include: !b.include } : b; }));
+                    }}
+                    style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 10px", marginBottom:6,
+                      background:CARD2, borderRadius:7, border:"1px solid "+(item.include ? BORDER : BORDER+"55"),
+                      cursor:"pointer", opacity:item.include ? 1 : 0.45 }}>
+                    <input type="checkbox" checked={item.include} readOnly style={{ accentColor:GOLD, flexShrink:0 }}/>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:CREAM, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{name}</div>
+                      {(item.fields.location || item.fields.promoteur) && (
+                        <div style={{ fontSize:11, color:MUTED, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {[item.fields.promoteur, item.fields.location].filter(Boolean).join(" · ")}
+                        </div>
+                      )}
+                    </div>
+                    {item.match ? (
+                      <span style={{ flexShrink:0, fontSize:10, fontWeight:700, color:"#3b82f6", background:"#3b82f622", border:"1px solid #3b82f655", borderRadius:4, padding:"2px 6px" }}>
+                        UPDATES {item.match.projectName.length > 14 ? item.match.projectName.slice(0,14).toUpperCase() + "…" : item.match.projectName.toUpperCase()}
+                      </span>
+                    ) : (
+                      <span style={{ flexShrink:0, fontSize:10, fontWeight:700, color:"#10b981", background:"#10b98122", border:"1px solid #10b98155", borderRadius:4, padding:"2px 6px" }}>
+                        NEW
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize:11, color:MUTED, lineHeight:1.5, marginBottom:12 }}>
+              Updates fill empty fields only — existing data is kept, new details are added to each project's notes.
+            </div>
+            {error && <div style={{ fontSize:12, color:"#ef4444", marginBottom:10 }}>{error}</div>}
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={function(){ setBatch(null); }} disabled={busy}
+                style={{ padding:"8px 14px", borderRadius:6, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:13, opacity:busy?0.5:1 }}>
+                ‹ Back
+              </button>
+              <button onClick={applyBatch} disabled={busy || !batch.some(function(b){ return b.include; })}
+                style={{ padding:"8px 16px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700,
+                  opacity:(busy || !batch.some(function(b){ return b.include; }))?0.5:1 }}>
+                {busy ? "Applying…" : "Apply " + batch.filter(function(b){ return b.include; }).length + " project(s)"}
+              </button>
+            </div>
+          </div>
+        ) : pending ? (
           <div style={{ padding:16 }}>
             <div style={{ fontSize:13, color:CREAM, lineHeight:1.6, marginBottom:6 }}>
               This looks like a project already in your pipeline:
@@ -1715,36 +1856,31 @@ function AppInner() {
     setShowAdd(true);
   }
 
-  // Merge AI-extracted info into an existing lead: fill blanks, never overwrite;
-  // anything new or conflicting lands in notes. Opens EditForm for review.
+  // Single match: merge into a draft and open EditForm for review before saving.
   function handleUpdateExisting(lead, fields, rawText) {
-    var f = fields || {};
-    var merged = { ...lead };
-    var fillable = ["location", "promoteur", "contactName", "phone", "units", "unitDetails", "amenities"];
-    var conflicts = [];
-    fillable.forEach(function(k){
-      var nv = (f[k] || "").trim();
-      if (!nv) return;
-      if (!String(merged[k] || "").trim()) merged[k] = nv;
-      else if (nv.toLowerCase() !== String(merged[k]).trim().toLowerCase()) conflicts.push(k + ": " + nv);
-    });
-    var region = (f.region || "").trim();
-    if (!String(merged.region || "").trim() && regions.indexOf(region) !== -1) merged.region = region;
-    if (merged.promoteur && !String(merged.promoteurKey || "").trim()) {
-      merged.promoteurKey = merged.promoteur.toLowerCase();
-      merged.promoteurFull = merged.promoteur;
-    }
-    var today = new Date().toISOString().split("T")[0];
-    var block = "--- AI update " + today + " ---";
-    if (conflicts.length) block += "\nNew values seen (kept yours): " + conflicts.join(" | ");
-    if ((f.notes || "").trim()) block += "\n" + f.notes.trim();
-    if ((rawText || "").trim()) block += "\nSource:\n" + rawText.trim();
-    merged.notes = (String(merged.notes || "").trim() ? merged.notes + "\n\n" : "") + block;
+    var merged = mergeExtractedIntoLead(lead, fields, rawText, regions);
     setShowPaste(null);
     setSharedImg(null);
     setEditLead(lead);
     setEditDraft(merged);
     setSyncContact(false);
+  }
+
+  // Multiple projects: write creations + non-destructive merges in one batch.
+  async function handleBatchApply(items) {
+    var batch = writeBatch(db);
+    items.forEach(function(item){
+      if (item.match) {
+        var merged = mergeExtractedIntoLead(item.match, item.fields, null, regions);
+        delete merged.id;
+        batch.update(doc(db, "leads", String(item.match.id)), merged);
+      } else {
+        batch.set(doc(collection(db, "leads")), buildLeadFromExtracted(item.fields, regions));
+      }
+    });
+    await batch.commit();
+    setShowPaste(null);
+    setSharedImg(null);
   }
 
   // ── Settings persistence ───────────────────────────────────────────────────
@@ -2219,6 +2355,7 @@ function AppInner() {
           allLeads={leads}
           onExtracted={function(fields, rawText){ setSharedImg(null); handleExtracted(fields, rawText); }}
           onUpdateExisting={handleUpdateExisting}
+          onBatchApply={handleBatchApply}
           onClose={function(){ setShowPaste(null); setSharedImg(null); }}
         />
       )}
