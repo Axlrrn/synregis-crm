@@ -1125,18 +1125,19 @@ function SettingsModal(props) {
           </div>
           {pwMsg && <div style={{ marginTop:8, fontSize:11, lineHeight:1.4, color: pwMsg.ok ? "#10b981" : "#ef4444" }}>{pwMsg.text}</div>}
         </div>
-        {!props.isStandalone && (
+        {!(typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent)) && (
           <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
             <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
-              Application
+              Android App
             </div>
-            <button onClick={function(){ if (props.onInstall) props.onInstall(); }}
-              style={{ width:"100%", padding:"9px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent",
-                color:GOLD, cursor:"pointer", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
-              ⬇ Installer l'application
-            </button>
+            <a href="/synregis.apk" download
+              style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, width:"100%", boxSizing:"border-box",
+                padding:"9px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent",
+                color:GOLD, fontWeight:700, fontSize:13, textDecoration:"none" }}>
+              ⬇ Télécharger l'app Android (.apk)
+            </a>
             <div style={{ fontSize:11, color:MUTED, marginTop:8, lineHeight:1.5 }}>
-              Sur Huawei : ouvrez ce site dans le Navigateur Huawei (pas Chrome), menu (⋮) → « Ajouter à l'écran d'accueil » pour une vraie app plein écran sans logo de navigateur.
+              Sur le téléphone : ouvrez ce lien, autorisez l'installation, puis connectez-vous avec email + mot de passe (section App Password ci-dessus).
             </div>
           </div>
         )}
@@ -1343,8 +1344,6 @@ function AppInner() {
   var [showEditRegions, setShowEditRegions] = useState(false);
   var [showSettings, setShowSettings]     = useState(false);
   var [settings, setSettings]             = useState(loadSettings);
-  var [installPrompt, setInstallPrompt]   = useState(null);
-  var [showInstallHelp, setShowInstallHelp] = useState(false);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
@@ -1355,45 +1354,10 @@ function AppInner() {
   var backArmed = useRef(false);
   var layersRef = useRef([]);
 
-  // Already installed? (running as a standalone PWA) — then hide the Install UI.
-  var isStandalone = typeof window !== "undefined" && (
-    (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
-    window.navigator.standalone === true
-  );
-
-  // Trigger install: native prompt where supported (Chrome/Edge), otherwise
-  // show manual "Add to Home Screen" steps (Huawei Browser, iOS Safari).
-  function triggerInstall() {
-    if (installPrompt) {
-      installPrompt.prompt();
-      installPrompt.userChoice.then(function() { setInstallPrompt(null); });
-    } else {
-      setShowInstallHelp(true);
-    }
-  }
-
   // ── Splash: dismiss after 2.5 s ───────────────────────────────────────────
   useEffect(function() {
     var t = setTimeout(function() { setShowSplash(false); }, 2500);
     return function() { clearTimeout(t); };
-  }, []);
-
-  // ── PWA install prompt ────────────────────────────────────────────────────
-  // The event may have fired before React mounted (captured in index.html into
-  // window.__deferredInstallPrompt), so seed from there AND keep listening.
-  useEffect(function() {
-    function handler(e) { e.preventDefault(); setInstallPrompt(e); }
-    function avail() { setInstallPrompt(window.__deferredInstallPrompt); }
-    function installed() { setInstallPrompt(null); }
-    if (window.__deferredInstallPrompt) setInstallPrompt(window.__deferredInstallPrompt);
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('pwa-install-available', avail);
-    window.addEventListener('appinstalled', installed);
-    return function() {
-      window.removeEventListener('beforeinstallprompt', handler);
-      window.removeEventListener('pwa-install-available', avail);
-      window.removeEventListener('appinstalled', installed);
-    };
   }, []);
 
   // ── Firestore real-time subscription ──────────────────────────────────────
@@ -1550,7 +1514,6 @@ function AppInner() {
   // history. Back pops the sentinel → we close the top-most layer and re-arm
   // if layers remain. Closing everything via the UI consumes the sentinel.
   var layers = [];
-  if (showInstallHelp)  layers.push(function(){ setShowInstallHelp(false); });
   if (showPaste !== null) layers.push(function(){ setShowPaste(null); setSharedImg(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
   if (showEditRegions)  layers.push(function(){ setShowEditRegions(false); });
@@ -1738,27 +1701,6 @@ function AppInner() {
                 {leads.filter(function(l){return l.pipelineStage==="Prospecting";}).length} Prospecting
               </div>
             </div>
-            {showInstallHelp && (
-              <div onClick={function(){ setShowInstallHelp(false); }}
-                style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:9999,
-                  display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-                <div onClick={function(e){ e.stopPropagation(); }}
-                  style={{ background:"#fff", borderRadius:12, maxWidth:380, width:"100%", padding:20, color:NAVY }}>
-                  <div style={{ fontWeight:800, fontSize:16, marginBottom:10 }}>Installer SynRegis CRM</div>
-                  <div style={{ fontSize:13, lineHeight:1.55, color:"#333" }}>
-                    <p style={{ margin:"6px 0" }}><b>Huawei :</b> utilisez le <b>Navigateur Huawei</b> (pré-installé), pas Chrome — ouvrez ce site, menu (⋮ ou ≡) → « Ajouter à l'écran d'accueil ». L'app s'ouvre alors en plein écran, sans barre ni logo de navigateur. Sur Huawei (sans services Google), Chrome ne peut créer qu'un raccourci avec son logo.</p>
-                    <p style={{ margin:"6px 0" }}><b>Autres Android (Chrome) :</b> menu ⋮ → « Installer l'application ».</p>
-                    <p style={{ margin:"6px 0" }}><b>Chrome (ordinateur) :</b> cliquez l'icône d'installation dans la barre d'adresse, ou menu ⋮ → « Installer SynRegis CRM… ».</p>
-                    <p style={{ margin:"6px 0" }}><b>iPhone / iPad (Safari) :</b> bouton Partager → « Sur l'écran d'accueil ».</p>
-                  </div>
-                  <button onClick={function(){ setShowInstallHelp(false); }}
-                    style={{ marginTop:14, background:GOLD, border:"none", borderRadius:8, cursor:"pointer",
-                      padding:"8px 14px", color:NAVY, fontWeight:700, fontSize:12 }}>
-                    OK
-                  </button>
-                </div>
-              </div>
-            )}
             <button onClick={function(){ setShowSettings(true); }} title="Settings"
               style={{ marginTop:4, background:"transparent", border:"1px solid "+BORDER, borderRadius:8, cursor:"pointer", padding:"7px 9px", color:GOLD, display:"flex", alignItems:"center" }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1998,8 +1940,6 @@ function AppInner() {
           settings={settings}
           onChange={function(s){ setSettings(s); }}
           onClose={function(){ setShowSettings(false); }}
-          isStandalone={isStandalone}
-          onInstall={triggerInstall}
           geminiKey={geminiKey}
           onSaveGeminiKey={saveGeminiKey}
         />
