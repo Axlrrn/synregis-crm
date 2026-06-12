@@ -1239,8 +1239,31 @@ function Gate(props) {
   var [authError, setAuthError]     = useState("");
   var [email, setEmail]             = useState(ALLOWED_EMAILS.length === 1 ? ALLOWED_EMAILS[0] : "");
   var [pw, setPw]                   = useState("");
+  var [autoBusy, setAutoBusy]       = useState(false);
+  var autoTried = useRef(false);
   // Inside the Android wrapper Google's OAuth popup is blocked — email only.
   var inApp = typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent);
+
+  // In the app, the fingerprint gate already protects entry — so a stored
+  // (hardware-encrypted) credential signs in silently. No typing, ever.
+  useEffect(function() {
+    if (phase !== "signin" || autoTried.current || !inApp) return;
+    if (!window.SynRegisNative || !window.SynRegisNative.getCredentials) return;
+    var packed = "";
+    try { packed = window.SynRegisNative.getCredentials() || ""; } catch(e) {}
+    if (!packed) return;
+    autoTried.current = true;
+    var sep = packed.indexOf("\n");
+    if (sep < 1) return;
+    setAutoBusy(true);
+    signInWithEmailAndPassword(auth, packed.slice(0, sep), packed.slice(sep + 1))
+      .catch(function() {
+        // Stored password no longer valid — drop it and show the form once
+        try { window.SynRegisNative.clearCredentials(); } catch(e) {}
+        setAutoBusy(false);
+        setAuthError("Saved sign-in expired — enter your password once to refresh it.");
+      });
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(function() {
     return onAuthStateChanged(auth, function(u) {
@@ -1269,7 +1292,12 @@ function Gate(props) {
   function doEmailSignIn() {
     setAuthError("");
     if (!email.trim() || !pw) { setAuthError("Enter email and password."); return; }
-    signInWithEmailAndPassword(auth, email.trim(), pw).catch(function(e){
+    signInWithEmailAndPassword(auth, email.trim(), pw).then(function(){
+      // Remember inside the app so future opens are fingerprint-only
+      if (inApp && window.SynRegisNative && window.SynRegisNative.storeCredentials) {
+        try { window.SynRegisNative.storeCredentials(email.trim(), pw); } catch(e) {}
+      }
+    }).catch(function(e){
       var code = e && e.code;
       if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
         setAuthError("Wrong password — or no app password set yet. Set one on the website: Settings → App Password.");
@@ -1297,6 +1325,9 @@ function Gate(props) {
     return <div style={wrap}><div style={card}><div style={sub}>Loading…</div></div></div>;
   }
   if (phase === "signin") {
+    if (autoBusy) {
+      return <div style={wrap}><div style={card}><div style={sub}>Signing in…</div></div></div>;
+    }
     var inpSt = { width:"100%", boxSizing:"border-box", background:"#091525", border:"1px solid "+BORDER, borderRadius:8, padding:"11px 12px", color:CREAM, fontSize:14, outline:"none", marginBottom:8 };
     return (
       <div style={wrap}><div style={card}>
@@ -1339,9 +1370,11 @@ function Gate(props) {
   return (
     <>
       {props.children}
-      <div style={floatBar}>
-        <button style={floatBtnMuted} onClick={doSignOut}>SIGN OUT</button>
-      </div>
+      {!inApp && (
+        <div style={floatBar}>
+          <button style={floatBtnMuted} onClick={doSignOut}>SIGN OUT</button>
+        </div>
+      )}
     </>
   );
 }

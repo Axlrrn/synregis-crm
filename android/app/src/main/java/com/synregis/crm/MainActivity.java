@@ -47,6 +47,61 @@ public class MainActivity extends Activity {
             sharedImagePacked = null; // one-shot
             return packed == null ? "" : packed;
         }
+
+        // Credentials encrypted with a hardware-keystore key; the app itself is
+        // fingerprint-gated, so unlock → auto sign-in with no typing.
+        @JavascriptInterface
+        public void storeCredentials(String email, String password) {
+            try {
+                byte[] plain = (email + "\n" + password).getBytes("UTF-8");
+                javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+                c.init(javax.crypto.Cipher.ENCRYPT_MODE, getOrCreateKey());
+                byte[] enc = c.doFinal(plain);
+                getSharedPreferences("synregis", MODE_PRIVATE).edit()
+                        .putString("cred_iv", Base64.encodeToString(c.getIV(), Base64.NO_WRAP))
+                        .putString("cred_data", Base64.encodeToString(enc, Base64.NO_WRAP))
+                        .apply();
+            } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public String getCredentials() {
+            try {
+                android.content.SharedPreferences p = getSharedPreferences("synregis", MODE_PRIVATE);
+                String iv = p.getString("cred_iv", null);
+                String data = p.getString("cred_data", null);
+                if (iv == null || data == null) return "";
+                javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding");
+                c.init(javax.crypto.Cipher.DECRYPT_MODE, getOrCreateKey(),
+                        new javax.crypto.spec.GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)));
+                return new String(c.doFinal(Base64.decode(data, Base64.NO_WRAP)), "UTF-8");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void clearCredentials() {
+            getSharedPreferences("synregis", MODE_PRIVATE).edit()
+                    .remove("cred_iv").remove("cred_data").apply();
+        }
+    }
+
+    private javax.crypto.SecretKey getOrCreateKey() throws Exception {
+        java.security.KeyStore ks = java.security.KeyStore.getInstance("AndroidKeyStore");
+        ks.load(null);
+        if (ks.containsAlias("synregis_cred")) {
+            return ((java.security.KeyStore.SecretKeyEntry) ks.getEntry("synregis_cred", null)).getSecretKey();
+        }
+        javax.crypto.KeyGenerator kg = javax.crypto.KeyGenerator.getInstance(
+                android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        kg.init(new android.security.keystore.KeyGenParameterSpec.Builder("synregis_cred",
+                android.security.keystore.KeyProperties.PURPOSE_ENCRYPT
+                        | android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+                .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build());
+        return kg.generateKey();
     }
 
     @Override
