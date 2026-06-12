@@ -101,17 +101,20 @@ function staleDays(lead) {
 // Tries model aliases in order so the integration survives Google renames.
 var GEMINI_MODELS = ["gemini-flash-latest", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
 
-async function extractLeadWithAI(text, apiKey, regions) {
+async function extractLeadWithAI(text, image, apiKey, regions) {
   var prompt =
     "You extract real-estate lead data for a property CRM in Mauritius. " +
-    "From the announcement/ad text below, extract these fields and reply with ONLY a JSON object (no markdown):\n" +
+    "From the announcement/ad below (text and/or a screenshot image), extract these fields and reply with ONLY a JSON object (no markdown):\n" +
     '{"projectName": string, "location": string, "promoteur": string (developer/company), ' +
     '"contactName": string (person name if mentioned), "phone": string (as written, first number if several), ' +
     '"units": string (total units, e.g. \'24 units\'), "unitDetails": string (unit types/sizes/prices breakdown), ' +
     '"amenities": string (comma-separated), ' +
     '"region": string (one of: ' + regions.join(", ") + " — pick the best match for the location, or empty if unsure), " +
     '"notes": string (anything else useful: prices, delivery dates, syndic fees, website, source)}\n' +
-    "Use an empty string for unknown fields. Never invent data.\n\nTEXT:\n" + text;
+    "Use an empty string for unknown fields. Never invent data.";
+  var parts = [{ text: prompt }];
+  if (text && text.trim()) parts.push({ text: "TEXT:\n" + text });
+  if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
   var lastError = null;
   for (var i = 0; i < GEMINI_MODELS.length; i++) {
     var res;
@@ -122,7 +125,7 @@ async function extractLeadWithAI(text, apiKey, regions) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ parts: parts }],
             generationConfig: { responseMimeType: "application/json", temperature: 0 },
           }),
         }
@@ -885,14 +888,38 @@ function DetailPanel(props) {
 
 function PasteLeadModal(props) {
   var [text, setText] = useState(props.initialText || "");
+  var [img, setImg] = useState(props.initialImage || null); // {mimeType, data, preview}
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
+  var fileRef = useRef(null);
   var hasKey = !!(props.geminiKey && props.geminiKey.trim());
+  var canAnalyse = (text.trim() || img) && hasKey && !busy;
+
+  function loadImageFile(file) {
+    if (!file || file.type.indexOf("image/") !== 0) return;
+    var reader = new FileReader();
+    reader.onload = function() {
+      var url = reader.result;
+      var comma = url.indexOf(",");
+      setImg({ mimeType: file.type, data: url.slice(comma + 1), preview: url });
+    };
+    reader.readAsDataURL(file);
+  }
+  function handlePaste(e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type && items[i].type.indexOf("image/") === 0) {
+        loadImageFile(items[i].getAsFile());
+        e.preventDefault();
+        return;
+      }
+    }
+  }
   async function analyse() {
-    if (!text.trim() || busy) return;
+    if (!canAnalyse) return;
     setError(""); setBusy(true);
     try {
-      var fields = await extractLeadWithAI(text, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS);
+      var fields = await extractLeadWithAI(text, img, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS);
       props.onExtracted(fields, text);
     } catch(e) {
       setError(e && e.message ? e.message : String(e));
@@ -900,21 +927,38 @@ function PasteLeadModal(props) {
     }
   }
   var ovl = { position:"fixed", inset:0, background:"rgba(0,0,0,0.8)", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 };
-  var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"100%", maxWidth:520, display:"flex", flexDirection:"column" };
+  var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"100%", maxWidth:520, display:"flex", flexDirection:"column", maxHeight:"92vh", overflowY:"auto" };
   return (
-    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget && !busy) props.onClose(); }}>
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget && !busy) props.onClose(); }} onPaste={handlePaste}>
       <div style={sht}>
         <div style={{ padding:"16px 20px", borderBottom:"1px solid "+BORDER, color:GOLD, fontWeight:700 }}>
-          ✨ New Lead from Text
+          ✨ New Lead from Text or Screenshot
         </div>
         <div style={{ padding:16 }}>
           <div style={{ fontSize:12, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
-            Paste a property ad, listing or message — AI fills the lead form for you to review.
+            Paste ad text and/or a screenshot — AI fills the lead form for you to review.
           </div>
           <textarea value={text} onChange={function(e){ setText(e.target.value); }}
-            placeholder="Paste the announcement text here..."
-            rows={9} autoFocus
+            placeholder="Paste the announcement text here (Ctrl+V also works for screenshots)..."
+            rows={7} autoFocus
             style={{ width:"100%", background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"10px 12px", color:CREAM, fontSize:13, resize:"vertical", boxSizing:"border-box" }}/>
+          <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }}
+            onChange={function(e){ loadImageFile(e.target.files && e.target.files[0]); e.target.value=""; }}/>
+          {img ? (
+            <div style={{ marginTop:8, position:"relative", display:"inline-block" }}>
+              <img src={img.preview} alt="screenshot"
+                style={{ maxHeight:130, maxWidth:"100%", borderRadius:6, border:"1px solid "+BORDER, display:"block" }}/>
+              <button onClick={function(){ setImg(null); }}
+                style={{ position:"absolute", top:-8, right:-8, width:22, height:22, borderRadius:11, border:"none",
+                  background:"#ef4444", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1 }}>✕</button>
+            </div>
+          ) : (
+            <button onClick={function(){ fileRef.current && fileRef.current.click(); }}
+              style={{ marginTop:8, padding:"7px 14px", borderRadius:6, border:"1px dashed "+GOLD+"66", background:"transparent",
+                color:GOLD, cursor:"pointer", fontSize:12 }}>
+              📷 Add screenshot
+            </button>
+          )}
           {!hasKey && (
             <div style={{ marginTop:8, fontSize:12, color:"#f59e0b", background:"#f59e0b18", border:"1px solid #f59e0b55", borderRadius:6, padding:"8px 10px", lineHeight:1.5 }}>
               No AI key configured. Add your free Gemini API key in Settings → AI Extraction first.
@@ -925,9 +969,9 @@ function PasteLeadModal(props) {
         <div style={{ padding:"0 16px 16px", display:"flex", gap:8, justifyContent:"flex-end" }}>
           <button onClick={props.onClose} disabled={busy}
             style={{ padding:"8px 16px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:13, opacity:busy?0.5:1 }}>Cancel</button>
-          <button onClick={analyse} disabled={busy || !text.trim() || !hasKey}
+          <button onClick={analyse} disabled={!canAnalyse}
             style={{ padding:"8px 18px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700,
-              opacity:(busy || !text.trim() || !hasKey)?0.5:1 }}>
+              opacity:canAnalyse?1:0.5 }}>
             {busy ? "Analysing…" : "Analyse with AI"}
           </button>
         </div>
@@ -1295,6 +1339,7 @@ function AppInner() {
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
+  var [sharedImg, setSharedImg]           = useState(null);   // image shared from the Android app
   var [addPrefill, setAddPrefill]         = useState(null);
   var [geminiKey, setGeminiKey]           = useState("");
   var isMobile = useIsMobile();
@@ -1389,13 +1434,26 @@ function AppInner() {
     try { await setDoc(doc(db, "config", "app"), { geminiKey: key }, { merge: true }); } catch(e) {}
   }
 
-  // ── Shared text from the Android app (share → SynRegis) ────────────────────
+  // ── Shared text/image from the Android app (share → SynRegis) ──────────────
   useEffect(function() {
     try {
       var p = new URLSearchParams(window.location.search);
       var sharedText = p.get("shared");
       if (sharedText) {
         setShowPaste(sharedText);
+        window.history.replaceState({}, "", window.location.pathname);
+        return;
+      }
+      // Shared image is too large for a URL — the wrapper exposes it via a JS bridge
+      if (p.get("sharedimg") === "1" && window.SynRegisNative && window.SynRegisNative.getSharedImage) {
+        var packed = window.SynRegisNative.getSharedImage();
+        if (packed) {
+          var sep = packed.indexOf(";");
+          var mime = packed.slice(0, sep);
+          var b64 = packed.slice(sep + 1);
+          setSharedImg({ mimeType: mime, data: b64, preview: "data:" + mime + ";base64," + b64 });
+          setShowPaste("");
+        }
         window.history.replaceState({}, "", window.location.pathname);
       }
     } catch(e) {}
@@ -1483,7 +1541,7 @@ function AppInner() {
   // if layers remain. Closing everything via the UI consumes the sentinel.
   var layers = [];
   if (showInstallHelp)  layers.push(function(){ setShowInstallHelp(false); });
-  if (showPaste !== null) layers.push(function(){ setShowPaste(null); });
+  if (showPaste !== null) layers.push(function(){ setShowPaste(null); setSharedImg(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
   if (showEditRegions)  layers.push(function(){ setShowEditRegions(false); });
   if (callLogLead)      layers.push(function(){ setCallLogLead(null); });
@@ -1882,10 +1940,11 @@ function AppInner() {
       {showPaste !== null && (
         <PasteLeadModal
           initialText={showPaste}
+          initialImage={sharedImg}
           geminiKey={geminiKey}
           regions={regions}
-          onExtracted={handleExtracted}
-          onClose={function(){ setShowPaste(null); }}
+          onExtracted={function(fields, rawText){ setSharedImg(null); handleExtracted(fields, rawText); }}
+          onClose={function(){ setShowPaste(null); setSharedImg(null); }}
         />
       )}
       {editLead && editDraft && (

@@ -5,7 +5,9 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Message;
+import android.util.Base64;
 import android.view.View;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -13,6 +15,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 
@@ -20,9 +24,21 @@ public class MainActivity extends Activity {
 
     private static final String BASE_URL = "https://synregis-crm.vercel.app";
     private static final int FILE_CHOOSER_REQUEST = 4318;
+    private static final int MAX_SHARED_IMAGE_BYTES = 8 * 1024 * 1024;
 
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
+    private String sharedImagePacked; // "mime;base64" for the web app to pull via the bridge
+
+    // Exposed to the web app as window.SynRegisNative
+    private class NativeBridge {
+        @JavascriptInterface
+        public String getSharedImage() {
+            String packed = sharedImagePacked;
+            sharedImagePacked = null; // one-shot
+            return packed == null ? "" : packed;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,6 +53,7 @@ public class MainActivity extends Activity {
         s.setSupportMultipleWindows(true);
         // Marker so the web app knows it runs inside the wrapper (hides Google sign-in)
         s.setUserAgentString(s.getUserAgentString() + " SynRegisApp");
+        webView.addJavascriptInterface(new NativeBridge(), "SynRegisNative");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -93,6 +110,10 @@ public class MainActivity extends Activity {
 
     private String urlForIntent(Intent intent) {
         if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
+            String type = intent.getType() == null ? "" : intent.getType();
+            if (type.startsWith("image/") && readSharedImage(intent)) {
+                return BASE_URL + "/?sharedimg=1";
+            }
             String shared = intent.getStringExtra(Intent.EXTRA_TEXT);
             if (shared != null && !shared.trim().isEmpty()) {
                 try {
@@ -101,6 +122,30 @@ public class MainActivity extends Activity {
             }
         }
         return BASE_URL;
+    }
+
+    private boolean readSharedImage(Intent intent) {
+        try {
+            Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (uri == null) return false;
+            String mime = getContentResolver().getType(uri);
+            if (mime == null || !mime.startsWith("image/")) mime = "image/jpeg";
+            InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) return false;
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int n, total = 0;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > MAX_SHARED_IMAGE_BYTES) { in.close(); return false; }
+                out.write(buf, 0, n);
+            }
+            in.close();
+            sharedImagePacked = mime + ";" + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Override
