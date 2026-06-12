@@ -1005,10 +1005,18 @@ function SettingsModal(props) {
   var [pwMsg, setPwMsg] = useState(null); // {ok, text}
   function set(key, val) { props.onChange(Object.assign({}, s, { [key]: val })); }
   function toggle(key) { set(key, !s[key]); }
-  function saveKey() {
-    props.onSaveGeminiKey(keyDraft.trim());
-    setKeySaved(true);
-    setTimeout(function(){ setKeySaved(false); }, 2000);
+  var [keyError, setKeyError] = useState("");
+  async function saveKey() {
+    setKeyError("");
+    try {
+      await props.onSaveGeminiKey(keyDraft.trim());
+      setKeySaved(true);
+      setTimeout(function(){ setKeySaved(false); }, 2000);
+    } catch(e) {
+      setKeyError("Could not save — " + ((e && e.code) === "permission-denied"
+        ? "the database refused the write (check Firestore rules)."
+        : ((e && e.message) || String(e))));
+    }
   }
   async function saveAppPassword() {
     setPwMsg(null);
@@ -1096,6 +1104,7 @@ function SettingsModal(props) {
               {keySaved ? "Saved ✓" : "Save"}
             </button>
           </div>
+          {keyError && <div style={{ marginTop:8, fontSize:11, color:"#ef4444", lineHeight:1.4 }}>{keyError}</div>}
         </div>
 
         <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
@@ -1431,7 +1440,8 @@ function AppInner() {
 
   async function saveGeminiKey(key) {
     setGeminiKey(key);
-    try { await setDoc(doc(db, "config", "app"), { geminiKey: key }, { merge: true }); } catch(e) {}
+    // Let the failure propagate so Settings can show an honest error
+    await setDoc(doc(db, "config", "app"), { geminiKey: key }, { merge: true });
   }
 
   // ── Shared text/image from the Android app (share → SynRegis) ──────────────
