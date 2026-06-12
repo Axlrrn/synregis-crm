@@ -85,6 +85,33 @@ public class MainActivity extends Activity {
             getSharedPreferences("synregis", MODE_PRIVATE).edit()
                     .remove("cred_iv").remove("cred_data").apply();
         }
+
+        // Web app pushes follow-up data + settings; native schedules the daily alarm.
+        @JavascriptInterface
+        public void scheduleReminders(String json) {
+            try {
+                org.json.JSONObject payload = new org.json.JSONObject(json);
+                getSharedPreferences("synregis", MODE_PRIVATE).edit()
+                        .putBoolean("notif_enabled", payload.optBoolean("enabled", false))
+                        .putString("notif_time", payload.optString("time", "09:00"))
+                        .putString("notif_payload", json)
+                        .apply();
+                NotificationHelper.scheduleNext(MainActivity.this);
+            } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public void requestNotificationPermission() {
+            if (Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 100);
+                    }
+                });
+            }
+        }
     }
 
     private javax.crypto.SecretKey getOrCreateKey() throws Exception {

@@ -62,7 +62,7 @@ const PRC = {
 const LOGO_SRC = "/logo_dark.png";
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
-var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, phoneNotif: false, notifTime: "09:00" };
+var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, appNotif: false, appNotifStale: false, notifTime: "09:00" };
 function loadSettings() {
   try { return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("synregis_settings") || "{}")); }
   catch(e) { return Object.assign({}, DEFAULT_SETTINGS); }
@@ -1007,6 +1007,7 @@ function ToggleRow(props) {
 
 function SettingsModal(props) {
   var s = props.settings;
+  var inAppSettings = typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent);
   var [keyDraft, setKeyDraft] = useState(props.geminiKey || "");
   var [keySaved, setKeySaved] = useState(false);
   var [pwDraft, setPwDraft] = useState("");
@@ -1079,22 +1080,51 @@ function SettingsModal(props) {
           checked={s.banner} onChange={function(){ toggle("banner"); }}/>
         <ToggleRow label="Stale lead alerts" sub={"Amber tag on active leads with no call or meeting logged for " + STALE_DAYS + "+ days"}
           checked={s.stale} onChange={function(){ toggle("stale"); }}/>
-        <ToggleRow label="Browser notifications" sub="Desktop popup when you open the CRM (if follow-ups are due)"
-          checked={s.browserNotif} onChange={function(){ requestAndToggle("browserNotif"); }}/>
-        <ToggleRow label="Phone notifications" sub="Daily reminder at the set time, even with the app closed (installed app, Android/Chrome)"
-          checked={s.phoneNotif} onChange={function(){ requestAndToggle("phoneNotif"); }}/>
-        {(s.browserNotif || s.phoneNotif) && (
-          <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12, padding:"10px 0" }}>
-            <span style={{ fontSize:13, color:CREAM }}>Notify at</span>
-            <input type="time" value={s.notifTime}
-              onChange={function(e){ set("notifTime", e.target.value); }}
-              style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
-            <span style={{ fontSize:11, color:MUTED }}>daily</span>
-          </div>
-        )}
-        <div style={{ fontSize:11, color:MUTED, marginTop:16, lineHeight:1.6, borderTop:"1px solid "+BORDER, paddingTop:12 }}>
-          Phone notifications require browser notification permission. On iPhone, open this app in Safari, tap Share, then "Add to Home Screen", then reopen from your home screen.
+
+        <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginTop:16, marginBottom:4, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+          {inAppSettings ? "Phone Notifications" : "Notifications"}
         </div>
+        {inAppSettings ? (
+          <>
+            <ToggleRow label="Daily follow-up reminder" sub="Notification at the set time, even with the app closed"
+              checked={s.appNotif} onChange={function(){
+                if (!s.appNotif && window.SynRegisNative && window.SynRegisNative.requestNotificationPermission) {
+                  try { window.SynRegisNative.requestNotificationPermission(); } catch(e) {}
+                }
+                toggle("appNotif");
+              }}/>
+            {s.appNotif && (
+              <>
+                <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 0", borderBottom:"1px solid #1c355044" }}>
+                  <span style={{ fontSize:13, color:CREAM, flex:1 }}>Remind at</span>
+                  <input type="time" value={s.notifTime}
+                    onChange={function(e){ set("notifTime", e.target.value); }}
+                    style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
+                  <span style={{ fontSize:11, color:MUTED }}>daily</span>
+                </div>
+                <ToggleRow label="Include quiet leads" sub={"Add the count of leads silent for " + STALE_DAYS + "+ days to the daily reminder"}
+                  checked={s.appNotifStale} onChange={function(){ toggle("appNotifStale"); }}/>
+              </>
+            )}
+            <div style={{ fontSize:11, color:MUTED, marginTop:10, lineHeight:1.5 }}>
+              No notification is sent on days with nothing due. If reminders don't arrive, allow SynRegis in the phone's battery settings (Huawei limits background apps).
+            </div>
+          </>
+        ) : (
+          <>
+            <ToggleRow label="Browser notifications" sub="Desktop popup when you open the CRM (if follow-ups are due)"
+              checked={s.browserNotif} onChange={function(){ requestAndToggle("browserNotif"); }}/>
+            {s.browserNotif && (
+              <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 0" }}>
+                <span style={{ fontSize:13, color:CREAM, flex:1 }}>Notify after</span>
+                <input type="time" value={s.notifTime}
+                  onChange={function(e){ set("notifTime", e.target.value); }}
+                  style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
+                <span style={{ fontSize:11, color:MUTED }}>daily</span>
+              </div>
+            )}
+          </>
+        )}
 
         <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
           <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
@@ -1517,9 +1547,9 @@ function AppInner() {
   // ── Settings persistence ───────────────────────────────────────────────────
   useEffect(function() { saveSettingsLS(settings); }, [settings]);
 
-  // ── Follow-up notifications ────────────────────────────────────────────────
+  // ── Follow-up notifications (browser, when the CRM is opened on PC) ────────
   useEffect(function() {
-    if (!settings.browserNotif && !settings.phoneNotif) return;
+    if (!settings.browserNotif) return;
     if (!("Notification" in window) || Notification.permission !== "granted") return;
     if (!leads.length) return;
     var today = new Date().toISOString().split("T")[0];
@@ -1545,27 +1575,26 @@ function AppInner() {
     }
   }, [leads, settings]);
 
-  // ── Phone notifications: snapshot follow-ups for the service worker ───────
-  // The SW wakes on periodic background sync (installed PWA, Android/Chrome)
-  // and notifies at notifTime even when the app is closed.
+  // ── Phone notifications (Android app): push data to the native scheduler ──
+  // The wrapper stores the snapshot and fires a daily alarm at notifTime,
+  // fully offline, even with the app closed.
   useEffect(function() {
-    if (!("caches" in window) || !leads.length) return;
+    if (!leads.length) return;
+    if (!window.SynRegisNative || !window.SynRegisNative.scheduleReminders) return;
     var followUps = leads
       .filter(function(l){ return l.nextFollowUp && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted"; })
       .map(function(l){ return { name: l.projectName, date: l.nextFollowUp }; });
-    var payload = { enabled: !!settings.phoneNotif, notifTime: settings.notifTime || "09:00", followUps: followUps };
-    caches.open("synregis-notif").then(function(cache) {
-      return cache.put("/notif-data", new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json" } }));
-    }).catch(function(){});
-    if (!settings.phoneNotif || !("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.ready.then(function(reg) {
-      if (!("periodicSync" in reg)) return;
-      return navigator.permissions.query({ name: "periodic-background-sync" }).then(function(status) {
-        if (status.state === "granted") {
-          return reg.periodicSync.register("synregis-followups", { minInterval: 6 * 60 * 60 * 1000 });
-        }
-      });
-    }).catch(function(){});
+    var staleNames = leads
+      .filter(function(l){ return staleDays(l) !== null; })
+      .map(function(l){ return l.projectName; });
+    var payload = {
+      enabled: !!settings.appNotif,
+      time: settings.notifTime || "09:00",
+      includeStale: !!settings.appNotifStale,
+      followUps: followUps,
+      staleNames: staleNames,
+    };
+    try { window.SynRegisNative.scheduleReminders(JSON.stringify(payload)); } catch(e) {}
   }, [leads, settings]);
 
   // ── System back button: close the top layer instead of quitting the app ──
