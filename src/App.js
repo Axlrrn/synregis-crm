@@ -101,7 +101,7 @@ function staleDays(lead) {
 // Tries model aliases in order so the integration survives Google renames.
 var GEMINI_MODELS = ["gemini-flash-latest", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
 
-async function extractLeadWithAI(text, image, apiKey, regions) {
+async function extractLeadWithAI(text, image, apiKey, regions, existingLeads) {
   var prompt =
     "You extract real-estate lead data for a property CRM in Mauritius. " +
     "From the announcement/ad below (text and/or a screenshot image), extract these fields and reply with ONLY a JSON object (no markdown):\n" +
@@ -110,8 +110,15 @@ async function extractLeadWithAI(text, image, apiKey, regions) {
     '"units": string (total units, e.g. \'24 units\'), "unitDetails": string (unit types/sizes/prices breakdown), ' +
     '"amenities": string (comma-separated), ' +
     '"region": string (one of: ' + regions.join(", ") + " — pick the best match for the location, or empty if unsure), " +
-    '"notes": string (anything else useful: prices, delivery dates, syndic fees, website, source)}\n' +
+    '"notes": string (anything else useful: prices, delivery dates, syndic fees, website, source), ' +
+    '"existingId": string (if this announcement clearly refers to one of the EXISTING PIPELINE PROJECTS listed below — same project, even with spelling differences — put its id; otherwise empty string)}\n' +
     "Use an empty string for unknown fields. Never invent data.";
+  if (existingLeads && existingLeads.length) {
+    prompt += "\n\nEXISTING PIPELINE PROJECTS (id | name | promoteur | location):\n" +
+      existingLeads.map(function(l){
+        return l.id + " | " + (l.projectName || "") + " | " + (l.promoteur || "") + " | " + (l.location || "");
+      }).join("\n");
+  }
   var parts = [{ text: prompt }];
   if (text && text.trim()) parts.push({ text: "TEXT:\n" + text });
   if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
@@ -894,6 +901,26 @@ function DetailPanel(props) {
   );
 }
 
+// Match extracted fields to an existing lead: AI's pick first, then exact name, then phone.
+function findExistingMatch(fields, leads) {
+  if (!fields || !leads) return null;
+  if (fields.existingId) {
+    var byId = leads.find(function(l){ return String(l.id) === String(fields.existingId).trim(); });
+    if (byId) return byId;
+  }
+  var name = (fields.projectName || "").trim().toLowerCase();
+  if (name) {
+    var byName = leads.find(function(l){ return (l.projectName || "").trim().toLowerCase() === name; });
+    if (byName) return byName;
+  }
+  var ph = normalizePhone(fields.phone || "");
+  if (ph && ph.length >= 6) {
+    var byPhone = leads.find(function(l){ return l.phone && normalizePhone(l.phone) === ph; });
+    if (byPhone) return byPhone;
+  }
+  return null;
+}
+
 var FILTER_PRIORITIES = PRIORITIES;
 var MISSING_FIELDS = [
   { key: "promoteur",    label: "No promoteur" },
@@ -999,6 +1026,7 @@ function PasteLeadModal(props) {
   var [img, setImg] = useState(props.initialImage || null); // {mimeType, data, preview}
   var [busy, setBusy] = useState(false);
   var [error, setError] = useState("");
+  var [pending, setPending] = useState(null); // {fields, lead} when an existing project matched
   var fileRef = useRef(null);
   var hasKey = !!(props.geminiKey && props.geminiKey.trim());
   var canAnalyse = (text.trim() || img) && hasKey && !busy;
@@ -1027,8 +1055,14 @@ function PasteLeadModal(props) {
     if (!canAnalyse) return;
     setError(""); setBusy(true);
     try {
-      var fields = await extractLeadWithAI(text, img, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS);
-      props.onExtracted(fields, text);
+      var fields = await extractLeadWithAI(text, img, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS, props.allLeads);
+      var match = findExistingMatch(fields, props.allLeads);
+      if (match) {
+        setPending({ fields: fields, lead: match });
+        setBusy(false);
+      } else {
+        props.onExtracted(fields, text);
+      }
     } catch(e) {
       setError(e && e.message ? e.message : String(e));
       setBusy(false);
@@ -1042,6 +1076,38 @@ function PasteLeadModal(props) {
         <div style={{ padding:"16px 20px", borderBottom:"1px solid "+BORDER, color:GOLD, fontWeight:700 }}>
           ✨ New Lead from Text or Screenshot
         </div>
+        {pending ? (
+          <div style={{ padding:16 }}>
+            <div style={{ fontSize:13, color:CREAM, lineHeight:1.6, marginBottom:6 }}>
+              This looks like a project already in your pipeline:
+            </div>
+            <div style={{ padding:"10px 12px", background:CARD2, borderRadius:8, border:"1px solid "+GOLD+"55", marginBottom:14 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:CREAM }}>{pending.lead.projectName}</div>
+              <div style={{ fontSize:12, color:MUTED, marginTop:3 }}>
+                {(pending.lead.promoteur || "—")}{pending.lead.location ? " · " + pending.lead.location : ""}
+              </div>
+            </div>
+            <div style={{ fontSize:12, color:MUTED, lineHeight:1.5, marginBottom:14 }}>
+              <b style={{ color:GOLD }}>Update</b> fills the empty fields with the new info and adds everything
+              else to the notes (your existing data is never overwritten) — you review before saving.
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end", flexWrap:"wrap" }}>
+              <button onClick={function(){ setPending(null); }}
+                style={{ padding:"8px 14px", borderRadius:6, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:13 }}>
+                ‹ Back
+              </button>
+              <button onClick={function(){ props.onExtracted(pending.fields, text); }}
+                style={{ padding:"8px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13 }}>
+                Create new lead
+              </button>
+              <button onClick={function(){ props.onUpdateExisting(pending.lead, pending.fields, text); }}
+                style={{ padding:"8px 16px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                Update "{pending.lead.projectName.length > 22 ? pending.lead.projectName.slice(0,22) + "…" : pending.lead.projectName}"
+              </button>
+            </div>
+          </div>
+        ) : (
+        <>
         <div style={{ padding:16 }}>
           <div style={{ fontSize:12, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
             Paste ad text and/or a screenshot — AI fills the lead form for you to review.
@@ -1083,6 +1149,8 @@ function PasteLeadModal(props) {
             {busy ? "Analysing…" : "Analyse with AI"}
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );
@@ -1647,6 +1715,38 @@ function AppInner() {
     setShowAdd(true);
   }
 
+  // Merge AI-extracted info into an existing lead: fill blanks, never overwrite;
+  // anything new or conflicting lands in notes. Opens EditForm for review.
+  function handleUpdateExisting(lead, fields, rawText) {
+    var f = fields || {};
+    var merged = { ...lead };
+    var fillable = ["location", "promoteur", "contactName", "phone", "units", "unitDetails", "amenities"];
+    var conflicts = [];
+    fillable.forEach(function(k){
+      var nv = (f[k] || "").trim();
+      if (!nv) return;
+      if (!String(merged[k] || "").trim()) merged[k] = nv;
+      else if (nv.toLowerCase() !== String(merged[k]).trim().toLowerCase()) conflicts.push(k + ": " + nv);
+    });
+    var region = (f.region || "").trim();
+    if (!String(merged.region || "").trim() && regions.indexOf(region) !== -1) merged.region = region;
+    if (merged.promoteur && !String(merged.promoteurKey || "").trim()) {
+      merged.promoteurKey = merged.promoteur.toLowerCase();
+      merged.promoteurFull = merged.promoteur;
+    }
+    var today = new Date().toISOString().split("T")[0];
+    var block = "--- AI update " + today + " ---";
+    if (conflicts.length) block += "\nNew values seen (kept yours): " + conflicts.join(" | ");
+    if ((f.notes || "").trim()) block += "\n" + f.notes.trim();
+    if ((rawText || "").trim()) block += "\nSource:\n" + rawText.trim();
+    merged.notes = (String(merged.notes || "").trim() ? merged.notes + "\n\n" : "") + block;
+    setShowPaste(null);
+    setSharedImg(null);
+    setEditLead(lead);
+    setEditDraft(merged);
+    setSyncContact(false);
+  }
+
   // ── Settings persistence ───────────────────────────────────────────────────
   useEffect(function() { saveSettingsLS(settings); }, [settings]);
 
@@ -2116,7 +2216,9 @@ function AppInner() {
           initialImage={sharedImg}
           geminiKey={geminiKey}
           regions={regions}
+          allLeads={leads}
           onExtracted={function(fields, rawText){ setSharedImg(null); handleExtracted(fields, rawText); }}
+          onUpdateExisting={handleUpdateExisting}
           onClose={function(){ setShowPaste(null); setSharedImg(null); }}
         />
       )}
