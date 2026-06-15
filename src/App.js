@@ -328,16 +328,61 @@ function findPhoneMatches(phone, leadId, allLeads) {
 }
 
 // ── Export helper ─────────────────────────────────────────────────────────────
+// Tiered so it works on PC browsers (download) AND inside the Android WebView,
+// which silently ignores <a download> / data: URIs (no DownloadListener). There
+// we fall back to the Web Share sheet so Axel can save to Files or send to self.
 function exportData(leads) {
+  var s = JSON.stringify(leads, null, 2);
+  var fname = "synregis_leads_" + new Date().toISOString().split("T")[0] + ".json";
+  // 1. Web Share with a file — best path inside the app (and mobile browsers).
   try {
-    var s = JSON.stringify(leads, null, 2);
+    if (typeof File !== "undefined" && navigator.canShare) {
+      var file = new File([s], fname, { type: "application/json" });
+      if (navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: fname }).catch(function(){});
+        return;
+      }
+    }
+  } catch (e) { /* fall through to download */ }
+  // 2. Blob download — reliable on desktop browsers (data: URIs choke on size).
+  try {
+    var blob = new Blob([s], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
-    a.href = "data:application/json;charset=utf-8," + encodeURIComponent(s);
-    a.download = "synregis_leads.json";
+    a.href = url;
+    a.download = fname;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  } catch (e) { alert("Export failed: " + e.message); }
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  } catch (e) { alert("Export failed: " + (e && e.message ? e.message : e)); }
+}
+
+// Map an arbitrary JSON object (our own export, or a loosely-shaped one) into the
+// {projectName, location, ...} fields shape the extraction pipeline consumes.
+// `id` becomes `existingId` so re-importing our own export matches existing leads.
+function normalizeJsonEntry(o) {
+  if (!o || typeof o !== "object") return null;
+  function pick() {
+    for (var i = 0; i < arguments.length; i++) {
+      var v = o[arguments[i]];
+      if (v != null && String(v).trim()) return String(v).trim();
+    }
+    return "";
+  }
+  return {
+    projectName:  pick("projectName", "project", "name", "title"),
+    location:     pick("location", "area", "place"),
+    promoteur:    pick("promoteur", "developer", "promoter", "company", "builder"),
+    contactName:  pick("contactName", "contact", "contactPerson", "contact_name"),
+    phone:        pick("phone", "phones", "tel", "mobile", "phone_number", "contactPhone"),
+    units:        pick("units", "unit", "totalUnits", "nbUnits"),
+    unitDetails:  pick("unitDetails", "unitDetail", "unitTypes", "unit_details"),
+    amenities:    pick("amenities", "facilities", "features"),
+    region:       pick("region"),
+    notes:        pick("notes", "note", "description", "details", "remarks"),
+    existingId:   pick("existingId", "id"),
+  };
 }
 
 // ── Initial seed data (86 leads) ──────────────────────────────────────────────
@@ -1180,6 +1225,7 @@ function PasteLeadModal(props) {
   var [pending, setPending] = useState(null); // {fields, lead} when an existing project matched
   var [batch, setBatch] = useState(null);     // [{fields, match, include}] when several projects found
   var fileRef = useRef(null);
+  var jsonRef = useRef(null);
   var hasKey = !!(props.geminiKey && props.geminiKey.trim());
   var canAnalyse = (text.trim() || img) && hasKey && !busy;
 
@@ -1203,31 +1249,56 @@ function PasteLeadModal(props) {
       }
     }
   }
+  function hasContent(p){
+    return p && ((p.projectName || "").trim() || (p.promoteur || "").trim() || (p.location || "").trim() || (p.phone || "").trim());
+  }
+  // Route a parsed list of project entries into the same review flow, whether they
+  // came from the AI (text/image) or straight from a JSON file.
+  function handleProjects(projects, rawText) {
+    if (projects.length === 1) {
+      var match = findExistingMatch(projects[0], props.allLeads);
+      if (match) {
+        setPending({ fields: projects[0], lead: match });
+        setBusy(false);
+      } else {
+        props.onExtracted(projects[0], rawText || "");
+      }
+    } else {
+      setBatch(projects.map(function(p){
+        return { fields: p, match: findExistingMatch(p, props.allLeads), include: true };
+      }));
+      setBusy(false);
+    }
+  }
   async function analyse() {
     if (!canAnalyse) return;
     setError(""); setBusy(true);
     try {
       var projects = await extractLeadWithAI(text, img, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS, props.allLeads);
-      projects = (projects || []).filter(function(p){
-        return p && ((p.projectName || "").trim() || (p.promoteur || "").trim() || (p.location || "").trim() || (p.phone || "").trim());
-      });
+      projects = (projects || []).filter(hasContent);
       if (!projects.length) throw new Error("No project found in the text/image.");
-      if (projects.length === 1) {
-        var match = findExistingMatch(projects[0], props.allLeads);
-        if (match) {
-          setPending({ fields: projects[0], lead: match });
-          setBusy(false);
-        } else {
-          props.onExtracted(projects[0], text);
-        }
-      } else {
-        setBatch(projects.map(function(p){
-          return { fields: p, match: findExistingMatch(p, props.allLeads), include: true };
-        }));
-        setBusy(false);
-      }
+      handleProjects(projects, text);
     } catch(e) {
       setError(e && e.message ? e.message : String(e));
+      setBusy(false);
+    }
+  }
+  // JSON files are already structured — parse and allocate directly, no AI needed.
+  async function loadJsonFile(file) {
+    if (!file) return;
+    setError(""); setBusy(true);
+    try {
+      var raw = await file.text();
+      var data = JSON.parse(raw);
+      var arr = Array.isArray(data) ? data
+        : (data && Array.isArray(data.projects)) ? data.projects
+        : (data && Array.isArray(data.leads)) ? data.leads
+        : [data];
+      var projects = arr.map(normalizeJsonEntry).filter(hasContent);
+      if (!projects.length) throw new Error("No usable project entries found in this JSON file.");
+      handleProjects(projects, "");
+    } catch(e) {
+      setError(e && e.message ? ("Couldn't read JSON — " + e.message) : String(e));
       setBusy(false);
     }
   }
@@ -1247,7 +1318,7 @@ function PasteLeadModal(props) {
     <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget && !busy) props.onClose(); }} onPaste={handlePaste}>
       <div style={sht}>
         <div style={{ padding:"16px 20px", borderBottom:"1px solid "+BORDER, color:GOLD, fontWeight:700 }}>
-          ✨ New Lead from Text or Screenshot
+          ✨ New Lead from Text, Screenshot or JSON
         </div>
         {batch ? (
           <div style={{ padding:16 }}>
@@ -1338,6 +1409,7 @@ function PasteLeadModal(props) {
         <div style={{ padding:16 }}>
           <div style={{ fontSize:12, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
             Paste ad text and/or a screenshot — AI fills the lead form for you to review.
+            Or import a <b style={{ color:GOLD }}>JSON file</b> below to allocate many projects at once.
           </div>
           <textarea value={text} onChange={function(e){ setText(e.target.value); }}
             placeholder="Paste the announcement text here (Ctrl+V also works for screenshots)..."
@@ -1360,6 +1432,16 @@ function PasteLeadModal(props) {
               📷 Add screenshot
             </button>
           )}
+          <input ref={jsonRef} type="file" accept=".json,application/json" style={{ display:"none" }}
+            onChange={function(e){ loadJsonFile(e.target.files && e.target.files[0]); e.target.value=""; }}/>
+          <div style={{ marginTop:8 }}>
+            <button onClick={function(){ jsonRef.current && jsonRef.current.click(); }} disabled={busy}
+              style={{ padding:"7px 14px", borderRadius:6, border:"1px dashed "+GOLD+"66", background:"transparent",
+                color:GOLD, cursor:busy?"default":"pointer", fontSize:12, opacity:busy?0.5:1 }}>
+              📄 Import JSON file
+            </button>
+            <span style={{ marginLeft:8, fontSize:11, color:MUTED }}>no AI key needed</span>
+          </div>
           {!hasKey && (
             <div style={{ marginTop:8, fontSize:12, color:"#f59e0b", background:"#f59e0b18", border:"1px solid #f59e0b55", borderRadius:6, padding:"8px 10px", lineHeight:1.5 }}>
               No AI key configured. Add your free Gemini API key in Settings → AI Extraction first.
