@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import {
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection,
   doc,
   onSnapshot,
@@ -9,8 +11,10 @@ import {
   updateDoc,
   writeBatch,
   arrayUnion,
+  arrayRemove,
   setDoc,
   getDoc,
+  getDocs,
   deleteDoc,
 } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
@@ -27,7 +31,17 @@ const firebaseConfig = {
   appId: "1:93754862526:web:14e4318fb36ebff70967ef",
 };
 const fbApp = initializeApp(firebaseConfig);
-const db = getFirestore(fbApp);
+// Offline-first cache: the full last-synced dataset is kept on-device, so a weak
+// connection (Huawei / WebView) shows ALL leads instantly instead of a blank or
+// half-loaded pipeline. Falls back to memory-only if IndexedDB is unavailable.
+var db;
+try {
+  db = initializeFirestore(fbApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  });
+} catch (e) {
+  db = initializeFirestore(fbApp, {});
+}
 const storage = getStorage(fbApp);
 const auth = getAuth(fbApp);
 setPersistence(auth, browserLocalPersistence).catch(function(){});
@@ -60,6 +74,9 @@ const PRC = {
 // Light-on-dark variant (cream text, gold keys) for the navy header/splash —
 // dark surfaces are immune to browser force-dark (Huawei dark mode).
 const LOGO_SRC = "/logo_dark.png";
+// Warm the browser cache for the splash/header logo before React even mounts, so
+// it appears instantly instead of trickling in over a slow connection.
+if (typeof Image !== "undefined") { try { var _logoPreload = new Image(); _logoPreload.src = LOGO_SRC; } catch (e) {} }
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
 var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, appNotif: false, appNotifStale: false, notifTime: "09:00" };
@@ -1489,6 +1506,30 @@ function SettingsModal(props) {
   var [keySaved, setKeySaved] = useState(false);
   var [pwDraft, setPwDraft] = useState("");
   var [pwMsg, setPwMsg] = useState(null); // {ok, text}
+  var [backups, setBackups] = useState(null);   // null = not loaded yet, [] = none
+  var [backupsErr, setBackupsErr] = useState("");
+  var [confirmRestore, setConfirmRestore] = useState(null); // a backup pending confirmation
+  var [restoreMsg, setRestoreMsg] = useState(null);         // {ok, text}
+  var [restoring, setRestoring] = useState(false);
+  useEffect(function() {
+    if (!props.onLoadBackups) return;
+    var alive = true;
+    props.onLoadBackups()
+      .then(function(list){ if (alive) setBackups(list || []); })
+      .catch(function(e){ if (alive) setBackupsErr((e && e.message) || "Could not load backups."); });
+    return function(){ alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  async function doRestore(b) {
+    setRestoring(true); setRestoreMsg(null);
+    try {
+      await props.onRestore(b);
+      setRestoreMsg({ ok:true, text:"Restored " + (b.count||"the") + " projects from " + (b.date||"backup") + ". They'll appear in the list now." });
+      setConfirmRestore(null);
+    } catch(e) {
+      setRestoreMsg({ ok:false, text:"Restore failed — " + ((e && e.message) || String(e)) });
+    }
+    setRestoring(false);
+  }
   function set(key, val) { props.onChange(Object.assign({}, s, { [key]: val })); }
   function toggle(key) { set(key, !s[key]); }
   var [keyError, setKeyError] = useState("");
@@ -1624,6 +1665,55 @@ function SettingsModal(props) {
 
         <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
           <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
+            Backups &amp; Restore
+          </div>
+          <div style={{ fontSize:11, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
+            A full snapshot of all {props.leadCount != null ? props.leadCount + " " : ""}projects is saved automatically every day and each time you close the app. Restoring re-adds and reverts projects to a snapshot — it never deletes anything you've added since.
+          </div>
+          {backupsErr && <div style={{ fontSize:11, color:"#ef4444", lineHeight:1.4, marginBottom:8 }}>{backupsErr}</div>}
+          {restoreMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: restoreMsg.ok ? "#10b981" : "#ef4444" }}>{restoreMsg.text}</div>}
+          {backups === null && !backupsErr && <div style={{ fontSize:12, color:MUTED }}>Loading backups…</div>}
+          {backups !== null && backups.length === 0 && (
+            <div style={{ fontSize:12, color:MUTED }}>No backups yet — the first one saves automatically today.</div>
+          )}
+          {backups !== null && backups.length > 0 && (
+            <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:200, overflowY:"auto" }}>
+              {backups.map(function(b){
+                var pending = confirmRestore && confirmRestore.date === b.date;
+                return (
+                  <div key={b.date} style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"8px 10px" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:12, color:CREAM, fontWeight:600 }}>{b.date}</div>
+                        <div style={{ fontSize:10, color:MUTED }}>{(b.count != null ? b.count + " projects" : "")}{b.reason ? " · " + b.reason : ""}</div>
+                      </div>
+                      {!pending ? (
+                        <button onClick={function(){ setConfirmRestore(b); setRestoreMsg(null); }} disabled={restoring}
+                          style={{ flexShrink:0, padding:"5px 10px", borderRadius:5, border:"1px solid "+GOLD, background:"transparent", color:GOLD, cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                          Restore
+                        </button>
+                      ) : (
+                        <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                          <button onClick={function(){ doRestore(b); }} disabled={restoring}
+                            style={{ padding:"5px 10px", borderRadius:5, border:"none", background:"#10b981", color:"#fff", cursor:"pointer", fontSize:11, fontWeight:700 }}>
+                            {restoring ? "…" : "Confirm"}
+                          </button>
+                          <button onClick={function(){ setConfirmRestore(null); }} disabled={restoring}
+                            style={{ padding:"5px 10px", borderRadius:5, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:11 }}>
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+          <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
             App Password
           </div>
           <div style={{ fontSize:11, color:MUTED, marginBottom:8, lineHeight:1.5 }}>
@@ -1727,8 +1817,11 @@ function SplashScreen({ visible }) {
       pointerEvents: visible ? "all" : "none",
     }}>
       <img
-        src="/logo_dark.png"
+        src={LOGO_SRC}
         alt="SynRegis"
+        loading="eager"
+        fetchPriority="high"
+        onError={function(e){ if (e.target.src.indexOf("logo512")===-1) e.target.src="/logo512.png"; }}
         style={{
           width: "85vw",
           maxWidth: 400,
@@ -1889,6 +1982,8 @@ function Gate(props) {
 function AppInner() {
   var [leads, setLeads]               = useState([]);
   var [loading, setLoading]           = useState(true);
+  var [synced, setSynced]             = useState(false); // true once the live server snapshot has loaded (not just cache)
+  var [dbError, setDbError]           = useState("");    // set when Firestore can't be reached — shown, never silent
   var [selected, setSelected]         = useState(null);
   var [search, setSearch]             = useState("");
   var [filterPipeline, setFilterPipeline] = useState("All");
@@ -1943,10 +2038,15 @@ function AppInner() {
   // ── Firestore real-time subscription ──────────────────────────────────────
   useEffect(function() {
     var leadsCol = collection(db, "leads");
-    var unsub = onSnapshot(leadsCol,
+    // includeMetadataChanges lets us tell a cached/partial emission (fromCache)
+    // apart from a confirmed live one — so we never treat half-loaded data as truth.
+    var unsub = onSnapshot(leadsCol, { includeMetadataChanges: true },
       async function(snap) {
+        var fromCache = snap.metadata && snap.metadata.fromCache;
         if (snap.empty) {
-          // First-time run: seed all 86 leads into Firestore
+          // Seed ONLY when the SERVER confirms the collection is empty. Never seed
+          // from an empty cache (offline cold start) — that would clobber real data.
+          if (fromCache) return;
           var batch = writeBatch(db);
           INITIAL_LEADS.forEach(function(lead) {
             var ref = doc(collection(db, "leads"), String(lead.id));
@@ -1959,10 +2059,17 @@ function AppInner() {
         var data = snap.docs.map(function(d) { return { ...d.data(), id: d.id }; });
         setLeads(data);
         setLoading(false);
+        setDbError("");
+        setSynced(!fromCache); // true only when this is the live server set
       },
       function(err) {
+        // Surface it — never leave the user staring at a silent empty pipeline.
         console.error("Firestore error:", err);
         setLoading(false);
+        setSynced(false);
+        setDbError(err && err.code === "permission-denied"
+          ? "permission-denied"
+          : "offline");
       }
     );
     return function() { unsub(); };
@@ -2057,6 +2164,10 @@ function AppInner() {
       if (item.match) {
         var merged = mergeExtractedIntoLead(item.match, item.fields, null, regions);
         delete merged.id;
+        // An AI update fills text fields — it must never write back call/meeting
+        // logs from an in-memory copy (could overwrite entries added since load).
+        delete merged.callLog;
+        delete merged.meetingLog;
         batch.update(doc(db, "leads", String(item.match.id)), merged);
       } else {
         batch.set(doc(collection(db, "leads")), buildLeadFromExtracted(item.fields, regions));
@@ -2103,6 +2214,10 @@ function AppInner() {
   // fully offline, even with the app closed.
   useEffect(function() {
     if (!leads.length) return;
+    // Only ever push reminders built from the full, live dataset. A partial/cached
+    // load must NEVER overwrite the phone's alarms with a shrunken list — that's
+    // how follow-up reminders silently disappeared before.
+    if (!synced) return;
     if (!window.SynRegisNative || !window.SynRegisNative.scheduleReminders) return;
     var followUps = leads
       .filter(function(l){ return l.nextFollowUp && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted"; })
@@ -2118,7 +2233,87 @@ function AppInner() {
       staleNames: staleNames,
     };
     try { window.SynRegisNative.scheduleReminders(JSON.stringify(payload)); } catch(e) {}
-  }, [leads, settings]);
+  }, [leads, settings, synced]);
+
+  // ── Automatic cloud backups (Firestore `backups/{date}`) ──────────────────
+  // A full snapshot of every lead is written once per day and again whenever the
+  // app is closed/backgrounded, so any accidental deletion or bad edit is always
+  // recoverable from Settings → Backups. Only ever backs up a CONFIRMED-synced,
+  // non-empty dataset — a partial load can never overwrite a good backup.
+  var leadsRef = useRef(leads);
+  var syncedRef = useRef(synced);
+  useEffect(function(){ leadsRef.current = leads; syncedRef.current = synced; }, [leads, synced]);
+  var lastBackupDay = useRef("");
+
+  async function writeBackup(reason) {
+    var cur = leadsRef.current;
+    if (!syncedRef.current || !cur || !cur.length) return; // never back up partial/empty data
+    var day = new Date().toISOString().split("T")[0];
+    try {
+      await setDoc(doc(db, "backups", day), {
+        date: day,
+        savedAt: new Date().toISOString(),
+        reason: reason || "auto",
+        count: cur.length,
+        leads: cur,
+      });
+      lastBackupDay.current = day;
+      // Keep the last 30 daily snapshots; prune older ones (only on the daily
+      // write — no need to re-scan on every app-close).
+      if (reason === "daily") {
+        try {
+          var all = await getDocs(collection(db, "backups"));
+          var ids = all.docs.map(function(d){ return d.id; }).sort();
+          if (ids.length > 30) {
+            var batch = writeBatch(db);
+            ids.slice(0, ids.length - 30).forEach(function(id){ batch.delete(doc(db, "backups", id)); });
+            await batch.commit();
+          }
+        } catch(e) { /* pruning is best-effort */ }
+      }
+    } catch(e) { console.error("Backup failed:", e); }
+  }
+
+  // Daily: one snapshot per day, once the live data has synced.
+  useEffect(function() {
+    if (!synced || !leads.length) return;
+    var day = new Date().toISOString().split("T")[0];
+    if (lastBackupDay.current === day) return;
+    writeBackup("daily");
+  }, [synced, leads]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // On app close/background: capture the latest state. visibilitychange→hidden is
+  // the reliable signal on mobile (fires when backgrounded, page still alive).
+  useEffect(function() {
+    function onHide() { if (document.visibilityState === "hidden") writeBackup("close"); }
+    function onPageHide() { writeBackup("close"); }
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return function() {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function loadBackups() {
+    var snap = await getDocs(collection(db, "backups"));
+    return snap.docs
+      .map(function(d){ return d.data(); })
+      .sort(function(a, b){ return (b.savedAt || b.date || "").localeCompare(a.savedAt || a.date || ""); });
+  }
+
+  // Restore is NON-destructive: it re-adds/reverts every lead in the snapshot
+  // (resurrecting anything deleted) but never removes leads created since.
+  async function restoreBackup(backup) {
+    if (!backup || !backup.leads || !backup.leads.length) throw new Error("This backup is empty.");
+    var batch = writeBatch(db);
+    backup.leads.forEach(function(l){
+      var body = Object.assign({}, l);
+      delete body.id;
+      batch.set(doc(db, "leads", String(l.id)), body, { merge: true });
+    });
+    await batch.commit();
+  }
 
   // ── System back button: close the top layer instead of quitting the app ──
   // While any modal or the detail view is open, keep one sentinel entry in the
@@ -2221,7 +2416,15 @@ function AppInner() {
   async function saveEdit() {
     var draft = editDraft;
     try {
-      await updateDoc(doc(db, "leads", String(draft.id)), draft);
+      // NEVER write callLog/meetingLog from the edit form — it doesn't touch them,
+      // and writing back an in-memory copy could overwrite log entries added since
+      // this lead was loaded (how the Kaela text log was lost). Logs are mutated
+      // only by their own server-authoritative add/edit/delete paths.
+      var fields = { ...draft };
+      delete fields.callLog;
+      delete fields.meetingLog;
+      delete fields.id;
+      await updateDoc(doc(db, "leads", String(draft.id)), fields);
       if (syncContact && draft.promoteurKey && draft.promoteurKey.length > 2) {
         var toSync = leads.filter(function(l) {
           return String(l.id) !== String(draft.id) && l.promoteurKey === draft.promoteurKey;
@@ -2301,17 +2504,19 @@ function AppInner() {
       ? leads.filter(function(l){ return l.promoteurKey === pKey; })
       : leads.filter(function(l){ return String(l.id) === String(modalLead.id); });
     try {
-      var batch = writeBatch(db);
-      targets.forEach(function(l){
-        var arr = (l[field] || []);
-        var idx = arr.findIndex(function(e){ return e.date === orig.date && e.note === orig.note; });
-        if (idx === -1) return;
-        var next = arr.slice();
-        if (updated) next[idx] = updated; else next.splice(idx, 1);
-        var patch = {}; patch[field] = next;
-        batch.update(doc(db, "leads", String(l.id)), patch);
-      });
-      await batch.commit();
+      // Server-authoritative edit/delete: arrayRemove/arrayUnion operate on
+      // Firestore's CURRENT array, so changing one entry can never overwrite other
+      // entries added since this lead was loaded. (The old code rewrote the whole
+      // array from in-memory state — a stale copy there silently dropped entries.)
+      await Promise.all(targets.map(async function(l){
+        var ref = doc(db, "leads", String(l.id));
+        var patchDel = {}; patchDel[field] = arrayRemove(orig);
+        await updateDoc(ref, patchDel);
+        if (updated) {
+          var patchAdd = {}; patchAdd[field] = arrayUnion(updated);
+          await updateDoc(ref, patchAdd);
+        }
+      }));
     } catch(e) { console.error("Log edit failed:", e); }
     setModalLead(function(prev){
       if (!prev) return prev;
@@ -2346,11 +2551,16 @@ function AppInner() {
       {/* Header */}
       <div style={{ background:NAVY, position:"relative", paddingBottom:isMobile?34:52, flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:isMobile?"10px 14px 2px":"14px 28px 6px" }}>
-          <img src={LOGO_SRC} alt="SynRegis" style={{ height:isMobile?46:78, width:"auto", objectFit:"contain", display:"block" }}/>
+          <img src={LOGO_SRC} alt="SynRegis" loading="eager" fetchPriority="high"
+            onError={function(e){ if (e.target.src.indexOf("logo512")===-1) e.target.src="/logo512.png"; }}
+            style={{ height:isMobile?46:78, width:"auto", objectFit:"contain", display:"block" }}/>
           <div style={{ display:"flex", alignItems:"flex-start", gap:isMobile?8:14 }}>
             <div style={{ textAlign:"right" }}>
               {!isMobile && <div style={{ fontSize:11, color:MUTED, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:2 }}>Pipeline CRM</div>}
               <div style={{ fontSize:isMobile?16:24, fontWeight:700, color:CREAM, lineHeight:1.1 }}>{leads.length} Projects</div>
+              <div style={{ fontSize:isMobile?9:11, marginTop:2, color: synced ? "#10b981" : MUTED }}>
+                {synced ? "✓ Synced" : (dbError ? "⚠ Offline — last saved" : "↻ Syncing…")}
+              </div>
               <div style={{ fontSize:isMobile?10:12, color:MUTED, marginTop:3 }}>
                 {leads.filter(function(l){return l.pipelineStage==="Won";}).length} Won
                 &nbsp;|&nbsp;
@@ -2373,6 +2583,17 @@ function AppInner() {
           <path d="M0,18 C160,52 320,0 480,26 C640,52 800,4 960,28 C1120,52 1280,8 1440,30 L1440,56 L0,56 Z" fill={CARD}/>
         </svg>
       </div>
+
+      {/* Database connection banner — never let an empty/stale list look silent */}
+      {dbError && (
+        <div style={{ background: dbError==="permission-denied" ? "#ef444422" : "#f59e0b22",
+          borderBottom:"1px solid "+(dbError==="permission-denied"?"#ef4444":"#f59e0b")+"66",
+          color: dbError==="permission-denied"?"#fca5a5":"#fcd34d", padding:"8px 16px", fontSize:12, lineHeight:1.5, flexShrink:0 }}>
+          {dbError==="permission-denied"
+            ? "⚠ Database access was denied — check Firestore rules. Your data is safe in the cloud, not lost."
+            : "⚠ Can't reach the database right now — showing your last saved data. Your leads are safe; this will refresh when you're back online."}
+        </div>
+      )}
 
       {/* App update banner (Android wrapper) */}
       {appUpdate && (
@@ -2639,6 +2860,9 @@ function AppInner() {
           onClose={function(){ setShowSettings(false); }}
           geminiKey={geminiKey}
           onSaveGeminiKey={saveGeminiKey}
+          onLoadBackups={loadBackups}
+          onRestore={restoreBackup}
+          leadCount={leads.length}
         />
       )}
     </div>
