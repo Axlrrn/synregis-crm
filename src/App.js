@@ -17,7 +17,6 @@ import {
   getDocs,
   deleteDoc,
 } from "firebase/firestore";
-import { getStorage, ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut, browserLocalPersistence, setPersistence,
   signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword, sendPasswordResetEmail } from "firebase/auth";
 
@@ -42,7 +41,6 @@ try {
 } catch (e) {
   db = initializeFirestore(fbApp, {});
 }
-const storage = getStorage(fbApp);
 const auth = getAuth(fbApp);
 setPersistence(auth, browserLocalPersistence).catch(function(){});
 const googleProvider = new GoogleAuthProvider();
@@ -268,7 +266,6 @@ function buildLeadFromExtracted(f, regionsList) {
     createdAt: today,
     region: (regionsList || []).indexOf(region) !== -1 ? region : "",
     gpsCoords: "",
-    attachments: [],
   };
 }
 
@@ -565,88 +562,6 @@ function Fld(props) {
 }
 
 
-function AttachmentsSection(props) {
-  var lead = props.lead;
-  var attachments = lead.attachments || [];
-  var fileRef = useRef(null);
-  var [uploadState, setUploadState] = useState(null);
-
-  function handleFile(e) {
-    var file = e.target.files && e.target.files[0];
-    if (!file) return;
-    var sizeMB = (file.size / 1024 / 1024).toFixed(1);
-    setUploadState({ stage:"reading", pct:0, fileName:file.name, sizeMB:sizeMB });
-    var path = "attachments/" + String(lead.id) + "/" + Date.now() + "_" + file.name;
-    var sRef = storageRef(storage, path);
-    var task = uploadBytesResumable(sRef, file);
-    task.on("state_changed",
-      function(snap) {
-        var pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
-        setUploadState({ stage:"uploading", pct:pct, fileName:file.name, sizeMB:sizeMB });
-      },
-      function(err) {
-        alert("Upload failed: " + err.message);
-        setUploadState(null);
-        e.target.value = "";
-      },
-      async function() {
-        setUploadState({ stage:"saving", pct:100, fileName:file.name, sizeMB:sizeMB });
-        try {
-          var url = await getDownloadURL(task.snapshot.ref);
-          var meta = { name: file.name, url: url, uploadedAt: new Date().toISOString().split("T")[0] };
-          await updateDoc(doc(db, "leads", String(lead.id)), { attachments: arrayUnion(meta) });
-        } catch(err2) { alert("Save failed: " + err2.message); }
-        setUploadState(null);
-        e.target.value = "";
-      }
-    );
-  }
-
-  var stageLabel = uploadState
-    ? uploadState.stage === "reading"   ? "Reading file..."
-    : uploadState.stage === "uploading" ? "Uploading " + uploadState.pct + "%"
-    : uploadState.stage === "saving"    ? "Saving..."
-    : "" : "";
-
-  return (
-    <div style={{ marginTop:8 }}>
-      <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:600, marginBottom:8 }}>Attachments</div>
-      {attachments.length === 0 && !uploadState && <div style={{ fontSize:12, color:MUTED, marginBottom:8 }}>No attachments yet.</div>}
-      {attachments.map(function(a, i) {
-        return (
-          <div key={i} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, padding:"6px 10px", background:CARD2, borderRadius:6, border:"1px solid "+BORDER }}>
-            <span style={{ fontSize:13, color:"#ef4444" }}>PDF</span>
-            <span style={{ flex:1, fontSize:12, color:CREAM, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</span>
-            <span style={{ fontSize:11, color:MUTED, flexShrink:0 }}>{a.uploadedAt}</span>
-            <a href={a.url} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize:11, color:GOLD, textDecoration:"none", flexShrink:0, padding:"3px 8px", border:"1px solid "+GOLD+"44", borderRadius:4 }}>
-              View
-            </a>
-          </div>
-        );
-      })}
-      {uploadState && (
-        <div style={{ marginBottom:8, padding:"8px 10px", background:CARD2, borderRadius:6, border:"1px solid "+BORDER }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-            <span style={{ fontSize:12, color:CREAM, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>{uploadState.fileName}</span>
-            <span style={{ fontSize:11, color:MUTED, marginLeft:8, flexShrink:0 }}>{uploadState.sizeMB} MB</span>
-          </div>
-          <div style={{ height:4, background:BORDER, borderRadius:2, overflow:"hidden", marginBottom:5 }}>
-            <div style={{ height:"100%", width:uploadState.pct+"%", background:GOLD, borderRadius:2, transition:"width 0.3s" }}/>
-          </div>
-          <div style={{ fontSize:11, color:GOLD }}>{stageLabel}</div>
-        </div>
-      )}
-      <input ref={fileRef} type="file" accept="application/pdf" style={{ display:"none" }} onChange={handleFile}/>
-      <button disabled={!!uploadState} onClick={function(){ fileRef.current && fileRef.current.click(); }}
-        style={{ padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent",
-          color:GOLD, cursor:"pointer", fontSize:12, opacity:uploadState?0.5:1 }}>
-        + Attach PDF
-      </button>
-    </div>
-  );
-}
-
 function RegionEditModal(props) {
   var [list, setList] = useState(props.regions.slice());
   var [newVal, setNewVal] = useState("");
@@ -754,7 +669,7 @@ function AddForm(props) {
     contactName:"", phone:"", units:"", unitDetails:"", amenities:"",
     projectStage:PROJECT_STAGES[0], pipelineStage:PIPELINE_STAGES[0],
     priority:"", notes:"", callLog:[], nextFollowUp:"", createdAt:"",
-    region:"", gpsCoords:"", attachments:[]
+    region:"", gpsCoords:""
   };
   var [form, setForm] = useState(function(){ return Object.assign({}, blank, props.initial || {}); });
   var [formError, setFormError] = useState("");
@@ -1132,9 +1047,6 @@ function DetailPanel(props) {
           })}
         </div>
       )}
-      <div style={{ marginTop:20, borderTop:"1px solid "+BORDER, paddingTop:16 }}>
-        <AttachmentsSection lead={lead}/>
-      </div>
     </div>
   );
 }
