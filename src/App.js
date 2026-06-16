@@ -1332,12 +1332,20 @@ function PasteLeadModal(props) {
     setError(""); setBusy(true);
     try {
       var raw = await file.text();
-      var data = JSON.parse(raw);
-      var arr = Array.isArray(data) ? data
-        : (data && Array.isArray(data.projects)) ? data.projects
-        : (data && Array.isArray(data.leads)) ? data.leads
-        : [data];
-      var projects = arr.map(normalizeJsonEntry).filter(hasContent);
+      var projects;
+      if (hasKey) {
+        // Let the AI read the JSON and place each value into the right CRM field
+        // (and match existing pipeline projects), exactly like text/screenshot import.
+        projects = (await extractLeadWithAI(raw, null, props.geminiKey.trim(), props.regions || DEFAULT_REGIONS, props.allLeads) || []).filter(hasContent);
+      } else {
+        // No AI key: fall back to direct field-alias mapping of structured JSON.
+        var data = JSON.parse(raw);
+        var arr = Array.isArray(data) ? data
+          : (data && Array.isArray(data.projects)) ? data.projects
+          : (data && Array.isArray(data.leads)) ? data.leads
+          : [data];
+        projects = arr.map(normalizeJsonEntry).filter(hasContent);
+      }
       if (!projects.length) throw new Error("No usable project entries found in this JSON file.");
       handleProjects(projects, "");
     } catch(e) {
@@ -1483,7 +1491,9 @@ function PasteLeadModal(props) {
                 color:GOLD, cursor:busy?"default":"pointer", fontSize:12, opacity:busy?0.5:1 }}>
               📄 Import JSON file
             </button>
-            <span style={{ marginLeft:8, fontSize:11, color:MUTED }}>no AI key needed</span>
+            <span style={{ marginLeft:8, fontSize:11, color:MUTED }}>
+              {hasKey ? "AI places the fields where they belong" : "basic mapping (add an AI key for smart placement)"}
+            </span>
           </div>
           {!hasKey && (
             <div style={{ marginTop:8, fontSize:12, color:"#f59e0b", background:"#f59e0b18", border:"1px solid #f59e0b55", borderRadius:6, padding:"8px 10px", lineHeight:1.5 }}>
