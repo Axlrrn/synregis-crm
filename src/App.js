@@ -189,11 +189,12 @@ function mergeExtractedIntoLead(lead, f, rawText, regionsList) {
     if (!String(merged[k] || "").trim()) merged[k] = nv;
     else if (nv.toLowerCase() !== String(merged[k]).trim().toLowerCase()) conflicts.push(k + ": " + nv);
   });
-  // Contact fields accumulate: new numbers/names/amenities are ADDED, deduped.
+  // Contact fields ACCUMULATE — existing values are never changed; new ones are
+  // appended (deduped) and tagged " (AI)" so you can see what the AI added.
   var newPhoneRaw = ((f && f.phone) || "").trim();
   if (newPhoneRaw) {
     if (!String(merged.phone || "").trim()) {
-      merged.phone = newPhoneRaw;
+      merged.phone = newPhoneRaw + " (AI)";
     } else {
       var have = phonesIn(merged.phone);
       var additions = newPhoneRaw.split(/[/;,]|\bou\b|\bet\b/i)
@@ -202,26 +203,26 @@ function mergeExtractedIntoLead(lead, f, rawText, regionsList) {
           var n = normalizePhone(s);
           return n.length >= 6 && have.indexOf(n) === -1;
         });
-      if (additions.length) merged.phone = merged.phone + " / " + additions.join(" / ");
+      if (additions.length) merged.phone = merged.phone + " / " + additions.map(function(s){ return s + " (AI)"; }).join(" / ");
     }
   }
   var newContact = ((f && f.contactName) || "").trim();
   if (newContact) {
     var curContact = String(merged.contactName || "").trim();
-    if (!curContact) merged.contactName = newContact;
+    if (!curContact) merged.contactName = newContact + " (AI)";
     else if (curContact.toLowerCase().indexOf(newContact.toLowerCase()) === -1) {
-      merged.contactName = curContact + " / " + newContact;
+      merged.contactName = curContact + " / " + newContact + " (AI)";
     }
   }
   var newAmen = ((f && f.amenities) || "").trim();
   if (newAmen) {
     var curAmen = String(merged.amenities || "").trim();
-    if (!curAmen) merged.amenities = newAmen;
+    if (!curAmen) merged.amenities = newAmen + " (AI)";
     else {
       var haveAmen = curAmen.toLowerCase().split(",").map(function(s){ return s.trim(); });
       var addAmen = newAmen.split(",").map(function(s){ return s.trim(); })
         .filter(function(a){ return a && haveAmen.indexOf(a.toLowerCase()) === -1; });
-      if (addAmen.length) merged.amenities = curAmen + ", " + addAmen.join(", ");
+      if (addAmen.length) merged.amenities = curAmen + ", " + addAmen.map(function(a){ return a + " (AI)"; }).join(", ");
     }
   }
   var region = ((f && f.region) || "").trim();
@@ -1491,9 +1492,6 @@ function PasteLeadModal(props) {
                 color:GOLD, cursor:busy?"default":"pointer", fontSize:12, opacity:busy?0.5:1 }}>
               📄 Import JSON file
             </button>
-            <span style={{ marginLeft:8, fontSize:11, color:MUTED }}>
-              {hasKey ? "AI places the fields where they belong" : "basic mapping (add an AI key for smart placement)"}
-            </span>
           </div>
           {!hasKey && (
             <div style={{ marginTop:8, fontSize:12, color:"#f59e0b", background:"#f59e0b18", border:"1px solid #f59e0b55", borderRadius:6, padding:"8px 10px", lineHeight:1.5 }}>
