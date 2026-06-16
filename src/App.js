@@ -351,28 +351,54 @@ function findPhoneMatches(phone, leadId, allLeads) {
 function exportData(leads) {
   var s = JSON.stringify(leads, null, 2);
   var fname = "synregis_leads_" + new Date().toISOString().split("T")[0] + ".json";
-  // 1. Web Share with a file — best path inside the app (and mobile browsers).
+  var inApp = typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent);
+
+  // Desktop / normal browsers: a Blob download is the most reliable path and
+  // produces a real file. (Do this first off-app — the share sheet can no-op.)
+  if (!inApp) {
+    try {
+      var blob = new Blob([s], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+      return;
+    } catch (e) { /* fall through to share / clipboard */ }
+  }
+
+  // Inside the Android WebView, <a download> is ignored — try the native share
+  // sheet (save to Files / send to self) if the WebView exposes it.
   try {
     if (typeof File !== "undefined" && navigator.canShare) {
       var file = new File([s], fname, { type: "application/json" });
       if (navigator.canShare({ files: [file] })) {
-        navigator.share({ files: [file], title: fname }).catch(function(){});
+        navigator.share({ files: [file], title: fname })
+          .catch(function(){ exportToClipboard(s); });
         return;
       }
     }
-  } catch (e) { /* fall through to download */ }
-  // 2. Blob download — reliable on desktop browsers (data: URIs choke on size).
+  } catch (e) { /* fall through to clipboard */ }
+
+  // Last resort that works everywhere: copy the JSON to the clipboard. Never
+  // fail silently — always tell the user what happened.
+  exportToClipboard(s);
+}
+
+function exportToClipboard(s) {
   try {
-    var blob = new Blob([s], { type: "application/json" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
-  } catch (e) { alert("Export failed: " + (e && e.message ? e.message : e)); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(s).then(
+        function(){ alert("Export copied to clipboard — paste it into Notes or an email to keep a copy.\n\nNote: your data is also backed up automatically every day (Settings → Backups & Restore)."); },
+        function(){ alert("Couldn't export a file here, but your data is safely backed up automatically — see Settings → Backups & Restore."); }
+      );
+      return;
+    }
+  } catch (e) { /* ignore */ }
+  alert("Couldn't export a file here, but your data is safely backed up automatically — see Settings → Backups & Restore.");
 }
 
 // Map an arbitrary JSON object (our own export, or a loosely-shaped one) into the
