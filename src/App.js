@@ -346,57 +346,99 @@ function findPhoneMatches(phone, leadId, allLeads) {
 // Tiered so it works on PC browsers (download) AND inside the Android WebView,
 // which silently ignores <a download> / data: URIs (no DownloadListener). There
 // we fall back to the Web Share sheet so Axel can save to Files or send to self.
-function exportData(leads) {
+function exportFilename() {
+  return "synregis_leads_" + new Date().toISOString().split("T")[0] + ".json";
+}
+
+// Trigger a real file download. Returns true if it was attempted (desktop), false
+// if it should not be relied on (inside the Android WebView, which ignores it).
+function downloadJson(s) {
+  try {
+    var blob = new Blob([s], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = exportFilename();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    return true;
+  } catch (e) { return false; }
+}
+
+function exportData(leads, onShowText) {
   var s = JSON.stringify(leads, null, 2);
-  var fname = "synregis_leads_" + new Date().toISOString().split("T")[0] + ".json";
   var inApp = typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent);
 
-  // Desktop / normal browsers: a Blob download is the most reliable path and
-  // produces a real file. (Do this first off-app — the share sheet can no-op.)
-  if (!inApp) {
-    try {
-      var blob = new Blob([s], { type: "application/json" });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = fname;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
-      return;
-    } catch (e) { /* fall through to share / clipboard */ }
-  }
+  // Desktop / normal browsers: a Blob download produces a real .json file.
+  if (!inApp && downloadJson(s)) return;
 
   // Inside the Android WebView, <a download> is ignored — try the native share
   // sheet (save to Files / send to self) if the WebView exposes it.
   try {
     if (typeof File !== "undefined" && navigator.canShare) {
-      var file = new File([s], fname, { type: "application/json" });
+      var file = new File([s], exportFilename(), { type: "application/json" });
       if (navigator.canShare({ files: [file] })) {
-        navigator.share({ files: [file], title: fname })
-          .catch(function(){ exportToClipboard(s); });
+        navigator.share({ files: [file], title: exportFilename() })
+          .catch(function(){ if (onShowText) onShowText(s); });
         return;
       }
     }
-  } catch (e) { /* fall through to clipboard */ }
+  } catch (e) { /* fall through */ }
 
-  // Last resort that works everywhere: copy the JSON to the clipboard. Never
-  // fail silently — always tell the user what happened.
-  exportToClipboard(s);
+  // Guaranteed fallback: show the JSON on screen so it can always be copied.
+  if (onShowText) onShowText(s);
 }
 
-function exportToClipboard(s) {
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(s).then(
-        function(){ alert("Export copied to clipboard — paste it into Notes or an email to keep a copy.\n\nNote: your data is also backed up automatically every day (Settings → Backups & Restore)."); },
-        function(){ alert("Couldn't export a file here, but your data is safely backed up automatically — see Settings → Backups & Restore."); }
-      );
-      return;
-    }
-  } catch (e) { /* ignore */ }
-  alert("Couldn't export a file here, but your data is safely backed up automatically — see Settings → Backups & Restore.");
+// Shown when a file download/share isn't possible (Android WebView): the full
+// JSON, always selectable and copyable, so the data can be taken elsewhere.
+function ExportModal(props) {
+  var s = props.text || "";
+  var taRef = useRef(null);
+  var [copied, setCopied] = useState(false);
+  function selectAll() { if (taRef.current) { taRef.current.focus(); taRef.current.select(); } }
+  function copy() {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(
+          function(){ setCopied(true); setTimeout(function(){ setCopied(false); }, 2000); },
+          function(){ selectAll(); }
+        );
+        return;
+      }
+    } catch (e) { /* ignore */ }
+    selectAll();
+  }
+  var ovl = { position:"fixed", inset:0, background:"#000000aa", zIndex:1100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 };
+  var box = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, padding:20, width:560, maxWidth:"94vw", maxHeight:"90vh", display:"flex", flexDirection:"column" };
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget) props.onClose(); }}>
+      <div style={box}>
+        <div style={{ fontSize:15, fontWeight:700, color:GOLD, marginBottom:6 }}>Export data ({props.count} projects)</div>
+        <div style={{ fontSize:11, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
+          Copy this JSON to use elsewhere. On the phone, tap <b style={{color:GOLD}}>Copy</b> (or long-press the text → Select all → Copy).
+        </div>
+        <textarea ref={taRef} readOnly value={s} onFocus={selectAll}
+          style={{ flex:1, minHeight:200, width:"100%", boxSizing:"border-box", background:INP, border:"1px solid "+BORDER,
+            borderRadius:8, padding:10, color:CREAM, fontSize:11, fontFamily:"monospace", resize:"none", outline:"none", whiteSpace:"pre" }}/>
+        <div style={{ display:"flex", gap:8, marginTop:12 }}>
+          <button onClick={copy}
+            style={{ flex:1, padding:"9px", borderRadius:6, border:"none", background:copied?"#10b981":GOLD, color:copied?"#fff":NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+          <button onClick={function(){ downloadJson(s); }}
+            style={{ flex:1, padding:"9px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent", color:GOLD, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+            Download file
+          </button>
+          <button onClick={props.onClose}
+            style={{ padding:"9px 16px", borderRadius:6, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:13 }}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Map an arbitrary JSON object (our own export, or a loosely-shaped one) into the
@@ -1948,6 +1990,7 @@ function AppInner() {
   var [regions, setRegions]               = useState(DEFAULT_REGIONS);
   var [showEditRegions, setShowEditRegions] = useState(false);
   var [showSettings, setShowSettings]     = useState(false);
+  var [showExport, setShowExport]         = useState(null); // JSON string when the export view is open
   var [settings, setSettings]             = useState(loadSettings);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
@@ -2269,6 +2312,7 @@ function AppInner() {
   if (showFilters) layers.push(function(){ setShowFilters(false); });
   if (showPaste !== null) layers.push(function(){ setShowPaste(null); setSharedImg(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
+  if (showExport !== null) layers.push(function(){ setShowExport(null); });
   if (showEditRegions)  layers.push(function(){ setShowEditRegions(false); });
   if (callLogLead)      layers.push(function(){ setCallLogLead(null); });
   if (meetingLogLead)   layers.push(function(){ setMeetingLogLead(null); });
@@ -2725,7 +2769,7 @@ function AppInner() {
           </div>
           <div style={{ padding:"8px 12px", borderTop:"1px solid "+BORDER, fontSize:11, color:MUTED, textAlign:"center" }}>
             {filtered.length} of {leads.length} shown
-            <button onClick={function(){exportData(leads);}} style={{ marginLeft:10, background:"none", border:"none", color:GOLD, cursor:"pointer", fontSize:11, textDecoration:"underline" }}>Export JSON</button>
+            <button onClick={function(){exportData(leads, setShowExport);}} style={{ marginLeft:10, background:"none", border:"none", color:GOLD, cursor:"pointer", fontSize:11, textDecoration:"underline" }}>Export JSON</button>
           </div>
         </div>
 
@@ -2810,6 +2854,9 @@ function AppInner() {
           onRestore={restoreBackup}
           leadCount={leads.length}
         />
+      )}
+      {showExport !== null && (
+        <ExportModal text={showExport} count={leads.length} onClose={function(){ setShowExport(null); }} />
       )}
     </div>
     </>
