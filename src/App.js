@@ -1994,6 +1994,7 @@ function AppInner() {
   var [settings, setSettings]             = useState(loadSettings);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
+  var [quietExpanded, setQuietExpanded]   = useState(false); // GOING QUIET banner: show all stale leads, not just the first 5
   var [appUpdate, setAppUpdate]           = useState(null); // {versionName, url} when a newer APK exists
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
   var [sharedImg, setSharedImg]           = useState(null);   // image shared from the Android app
@@ -2713,7 +2714,7 @@ function AppInner() {
               return (
                 <div style={{ margin:"8px 10px 4px", padding:"8px 12px", borderRadius:8, background:"#f59e0b18", border:"1px solid #f59e0b55" }}>
                   <div style={{ fontSize:11, fontWeight:700, color:"#f59e0b", marginBottom:4 }}>GOING QUIET ({staleLeads.length})</div>
-                  {staleLeads.slice(0,5).map(function(x){
+                  {(quietExpanded ? staleLeads : staleLeads.slice(0,5)).map(function(x){
                     return (
                       <div key={x.lead.id} onClick={function(){ setSelected(x.lead); }}
                         style={{ fontSize:12, color:CREAM, cursor:"pointer", padding:"2px 0", display:"flex", justifyContent:"space-between" }}>
@@ -2723,7 +2724,10 @@ function AppInner() {
                     );
                   })}
                   {staleLeads.length > 5 && (
-                    <div style={{ fontSize:11, color:MUTED, marginTop:3 }}>+ {staleLeads.length - 5} more — look for the amber tags below</div>
+                    <div onClick={function(){ setQuietExpanded(!quietExpanded); }}
+                      style={{ fontSize:11, fontWeight:600, color:"#f59e0b", marginTop:5, cursor:"pointer", userSelect:"none" }}>
+                      {quietExpanded ? "▲ Show less" : "▼ Show all " + staleLeads.length + " — tap each to open"}
+                    </div>
                   )}
                 </div>
               );
