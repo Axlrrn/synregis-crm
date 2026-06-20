@@ -86,6 +86,27 @@ function saveSettingsLS(s) {
   try { localStorage.setItem("synregis_settings", JSON.stringify(s)); } catch(e) {}
 }
 
+// ── PWA install (desktop/PC) ──────────────────────────────────────────────────
+// Chrome/Edge fire `beforeinstallprompt` once, often before React mounts. Stash
+// the event at module load so the Settings "Install on this PC" button can fire it.
+var _deferredInstall = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", function(e){
+    e.preventDefault();
+    _deferredInstall = e;
+    window.dispatchEvent(new Event("synregis-installable"));
+  });
+  window.addEventListener("appinstalled", function(){
+    _deferredInstall = null;
+    window.dispatchEvent(new Event("synregis-installed"));
+  });
+}
+function isStandalone() {
+  if (typeof window === "undefined") return false;
+  return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+    || window.navigator.standalone === true;
+}
+
 // ── Activity / staleness helpers ──────────────────────────────────────────────
 var STALE_DAYS = 14;
 var ACTIVE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence"];
@@ -1721,6 +1742,31 @@ function SettingsModal(props) {
         {!(typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent)) && (
           <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
             <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
+              Install on this PC
+            </div>
+            {isStandalone() ? (
+              <div style={{ fontSize:12, color:"#10b981", fontWeight:600 }}>✓ Installed — you're running the app.</div>
+            ) : props.canInstall ? (
+              <>
+                <button onClick={props.onInstall}
+                  style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, width:"100%", boxSizing:"border-box",
+                    padding:"9px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  ⬇ Install SynRegis as an app
+                </button>
+                <div style={{ fontSize:11, color:MUTED, marginTop:8, lineHeight:1.5 }}>
+                  Adds SynRegis to your desktop / Start menu and opens it in its own window — no browser tabs.
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize:11, color:MUTED, lineHeight:1.5 }}>
+                In Chrome or Edge, click the install icon (<span style={{ color:CREAM }}>⊕</span> / monitor icon) at the right of the address bar, or menu → "Install SynRegis CRM". Safari and Firefox can't install web apps — use Chrome or Edge.
+              </div>
+            )}
+          </div>
+        )}
+        {!(typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent)) && (
+          <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+            <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
               Android App
             </div>
             <a href="/synregis.apk" download
@@ -1995,6 +2041,7 @@ function AppInner() {
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
   var [quietExpanded, setQuietExpanded]   = useState(false); // GOING QUIET banner: show all stale leads, not just the first 5
+  var [installEvt, setInstallEvt]         = useState(_deferredInstall); // deferred PWA install prompt (desktop)
   var [appUpdate, setAppUpdate]           = useState(null); // {versionName, url} when a newer APK exists
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
   var [sharedImg, setSharedImg]           = useState(null);   // image shared from the Android app
@@ -2024,6 +2071,24 @@ function AppInner() {
       })
       .catch(function(){});
   }, []);
+
+  // ── PWA install prompt availability (desktop Chrome/Edge) ─────────────────
+  useEffect(function() {
+    function onAvail(){ setInstallEvt(_deferredInstall); }
+    function onInstalled(){ setInstallEvt(null); }
+    window.addEventListener("synregis-installable", onAvail);
+    window.addEventListener("synregis-installed", onInstalled);
+    return function(){
+      window.removeEventListener("synregis-installable", onAvail);
+      window.removeEventListener("synregis-installed", onInstalled);
+    };
+  }, []);
+
+  function installPwa() {
+    if (!_deferredInstall) return;
+    _deferredInstall.prompt();
+    _deferredInstall.userChoice.then(function(){ _deferredInstall = null; setInstallEvt(null); });
+  }
 
   // ── Firestore real-time subscription ──────────────────────────────────────
   useEffect(function() {
@@ -2857,6 +2922,8 @@ function AppInner() {
           onLoadBackups={loadBackups}
           onRestore={restoreBackup}
           leadCount={leads.length}
+          canInstall={!!installEvt}
+          onInstall={installPwa}
         />
       )}
       {showExport !== null && (
