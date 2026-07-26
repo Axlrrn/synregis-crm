@@ -77,7 +77,7 @@ const LOGO_SRC = "/logo_dark.png";
 if (typeof Image !== "undefined") { try { var _logoPreload = new Image(); _logoPreload.src = LOGO_SRC; } catch (e) {} }
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
-var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, appNotif: false, appNotifStale: false, notifTime: "09:00" };
+var DEFAULT_SETTINGS = { badge: true, banner: true, browserNotif: false, appNotif: false, notifTime: "09:00" };
 function loadSettings() {
   try { return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("synregis_settings") || "{}")); }
   catch(e) { return Object.assign({}, DEFAULT_SETTINGS); }
@@ -107,9 +107,7 @@ function isStandalone() {
     || window.navigator.standalone === true;
 }
 
-// ── Activity / staleness helpers ──────────────────────────────────────────────
-var STALE_DAYS = 14;
-var ACTIVE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence"];
+// ── Activity helpers ───────────────────────────────────────────────────────────
 function lastActivityDate(lead) {
   var dates = [];
   if (lead.createdAt) dates.push(lead.createdAt);
@@ -125,12 +123,6 @@ function daysSince(dateStr) {
   if (isNaN(d.getTime())) return null;
   var diff = Math.floor((Date.now() - d.getTime()) / 86400000);
   return diff < 0 ? 0 : diff;
-}
-// Days of silence on an active-pipeline lead, or null if not stale.
-function staleDays(lead) {
-  if (ACTIVE_STAGES.indexOf(lead.pipelineStage) === -1) return null;
-  var d = daysSince(lastActivityDate(lead));
-  return d !== null && d >= STALE_DAYS ? d : null;
 }
 
 // ── AI lead extraction (Gemini) ───────────────────────────────────────────────
@@ -457,6 +449,40 @@ function ExportModal(props) {
             Close
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Pops up once, the day a lead's Next Follow-Up date arrives, listing what's due.
+function FollowUpDueModal(props) {
+  var due = props.leads || [];
+  var ovl = { position:"fixed", inset:0, background:"#000000aa", zIndex:1200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 };
+  var box = { background:CARD, border:"1px solid "+GOLD+"66", borderRadius:12, padding:24, width:400, maxWidth:"92vw", maxHeight:"88vh", overflowY:"auto" };
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget) props.onClose(); }}>
+      <div style={box}>
+        <div style={{ fontSize:16, fontWeight:700, color:GOLD, marginBottom:4 }}>
+          Follow-up{due.length > 1 ? "s" : ""} due today
+        </div>
+        <div style={{ fontSize:12, color:MUTED, marginBottom:16 }}>
+          {due.length} project{due.length > 1 ? "s" : ""} scheduled for today.
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:20 }}>
+          {due.map(function(l){
+            return (
+              <div key={l.id} onClick={function(){ props.onSelect(l); }}
+                style={{ padding:"10px 12px", borderRadius:8, background:CARD2, border:"1px solid "+BORDER, cursor:"pointer" }}>
+                <div style={{ fontSize:13, fontWeight:600, color:CREAM }}>{l.projectName}</div>
+                <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>{l.promoteur || l.location || ""}</div>
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={props.onClose}
+          style={{ width:"100%", padding:"9px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+          Done
+        </button>
       </div>
     </div>
   );
@@ -1027,13 +1053,11 @@ function DetailPanel(props) {
         {(function(){
           var last = lastActivityDate(lead);
           var d = daysSince(last);
-          var stale = staleDays(lead);
           return (
             <div style={sec}>
               <div style={lbl}>Last Activity</div>
-              <div style={{ ...val, color: stale !== null ? "#f59e0b" : CREAM }}>
+              <div style={val}>
                 {last ? last + " (" + (d === 0 ? "today" : d + "d ago") + ")" : "-"}
-                {stale !== null ? " — going quiet" : ""}
               </div>
             </div>
           );
@@ -1605,8 +1629,6 @@ function SettingsModal(props) {
           checked={s.badge} onChange={function(){ toggle("badge"); }}/>
         <ToggleRow label="Due Today banner" sub="Summary strip at top of the leads list"
           checked={s.banner} onChange={function(){ toggle("banner"); }}/>
-        <ToggleRow label="Stale lead alerts" sub={"Amber tag on active leads with no call or meeting logged for " + STALE_DAYS + "+ days"}
-          checked={s.stale} onChange={function(){ toggle("stale"); }}/>
 
         <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginTop:16, marginBottom:4, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
           {inAppSettings ? "Phone Notifications" : "Notifications"}
@@ -1629,8 +1651,6 @@ function SettingsModal(props) {
                     style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
                   <span style={{ fontSize:11, color:MUTED }}>daily</span>
                 </div>
-                <ToggleRow label="Include quiet leads" sub={"Add the count of leads silent for " + STALE_DAYS + "+ days to the daily reminder"}
-                  checked={s.appNotifStale} onChange={function(){ toggle("appNotifStale"); }}/>
               </>
             )}
             <div style={{ fontSize:11, color:MUTED, marginTop:10, lineHeight:1.5 }}>
@@ -1799,14 +1819,12 @@ function LeadRow(props) {
   var showBadge = props.settings && props.settings.badge && (isOverdue || isDueToday);
   var badgeColor = isOverdue ? "#ef4444" : "#f59e0b";
   var badgeLabel = isOverdue ? "Overdue" : "Today";
-  var stale = props.settings && props.settings.stale ? staleDays(lead) : null;
-  var showStale = !showBadge && stale !== null;
   return (
     <div onClick={function(){ props.onSelect(lead); }}
       style={{
         padding:"12px 14px", cursor:"pointer", borderBottom:"1px solid "+BORDER,
         background: sel ? CARD2 : "transparent",
-        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : showStale ? "#f59e0b88" : "transparent")
+        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : "transparent")
       }}
       onMouseEnter={function(e){ if(!sel) e.currentTarget.style.background=CARD2+"88"; }}
       onMouseLeave={function(e){ if(!sel) e.currentTarget.style.background="transparent"; }}>
@@ -1817,11 +1835,6 @@ function LeadRow(props) {
         {showBadge && (
           <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#fff", background:badgeColor, borderRadius:4, padding:"1px 5px" }}>
             {badgeLabel}
-          </span>
-        )}
-        {showStale && (
-          <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#f59e0b", background:"#f59e0b22", border:"1px solid #f59e0b55", borderRadius:4, padding:"0px 5px" }}>
-            Quiet {stale}d
           </span>
         )}
       </div>
@@ -2040,13 +2053,13 @@ function AppInner() {
   var [settings, setSettings]             = useState(loadSettings);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
-  var [quietExpanded, setQuietExpanded]   = useState(false); // GOING QUIET banner: show all stale leads, not just the first 5
   var [installEvt, setInstallEvt]         = useState(_deferredInstall); // deferred PWA install prompt (desktop)
   var [appUpdate, setAppUpdate]           = useState(null); // {versionName, url} when a newer APK exists
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
   var [sharedImg, setSharedImg]           = useState(null);   // image shared from the Android app
   var [addPrefill, setAddPrefill]         = useState(null);
   var [geminiKey, setGeminiKey]           = useState("");
+  var [followUpPopup, setFollowUpPopup]   = useState(null); // array of leads due today, when the popup should show
   var isMobile = useIsMobile();
   var backArmed = useRef(false);
   var layersRef = useRef([]);
@@ -2236,6 +2249,21 @@ function AppInner() {
   // ── Settings persistence ───────────────────────────────────────────────────
   useEffect(function() { saveSettingsLS(settings); }, [settings]);
 
+  // ── Follow-up due-today popup (in-app, works on PC and phone alike) ────────
+  // Fires once per calendar day, the moment a lead's Next Follow-Up date arrives.
+  useEffect(function() {
+    if (!synced || !leads.length) return;
+    var today = new Date().toISOString().split("T")[0];
+    var lastShown = "";
+    try { lastShown = localStorage.getItem("synregis_followup_popup_date") || ""; } catch(e) {}
+    if (lastShown === today) return;
+    try { localStorage.setItem("synregis_followup_popup_date", today); } catch(e) {}
+    var due = leads.filter(function(l) {
+      return l.nextFollowUp === today && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted";
+    });
+    if (due.length > 0) setFollowUpPopup(due);
+  }, [leads, synced]);
+
   // ── Follow-up notifications (browser, when the CRM is opened on PC) ────────
   useEffect(function() {
     if (!settings.browserNotif) return;
@@ -2277,15 +2305,10 @@ function AppInner() {
     var followUps = leads
       .filter(function(l){ return l.nextFollowUp && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted"; })
       .map(function(l){ return { name: l.projectName, date: l.nextFollowUp }; });
-    var staleNames = leads
-      .filter(function(l){ return staleDays(l) !== null; })
-      .map(function(l){ return l.projectName; });
     var payload = {
       enabled: !!settings.appNotif,
       time: settings.notifTime || "09:00",
-      includeStale: !!settings.appNotifStale,
       followUps: followUps,
-      staleNames: staleNames,
     };
     try { window.SynRegisNative.scheduleReminders(JSON.stringify(payload)); } catch(e) {}
   }, [leads, settings, synced]);
@@ -2375,6 +2398,7 @@ function AppInner() {
   // history. Back pops the sentinel → we close the top-most layer and re-arm
   // if layers remain. Closing everything via the UI consumes the sentinel.
   var layers = [];
+  if (followUpPopup)    layers.push(function(){ setFollowUpPopup(null); });
   if (showFilters) layers.push(function(){ setShowFilters(false); });
   if (showPaste !== null) layers.push(function(){ setShowPaste(null); setSharedImg(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
@@ -2769,34 +2793,6 @@ function AppInner() {
                 </div>
               );
             })()}
-            {(function(){
-              if (!settings.banner || !settings.stale) return null;
-              var staleLeads = leads
-                .map(function(l){ return { lead: l, days: staleDays(l) }; })
-                .filter(function(x){ return x.days !== null; })
-                .sort(function(a,b){ return b.days - a.days; });
-              if (!staleLeads.length) return null;
-              return (
-                <div style={{ margin:"8px 10px 4px", padding:"8px 12px", borderRadius:8, background:"#f59e0b18", border:"1px solid #f59e0b55" }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"#f59e0b", marginBottom:4 }}>GOING QUIET ({staleLeads.length})</div>
-                  {(quietExpanded ? staleLeads : staleLeads.slice(0,5)).map(function(x){
-                    return (
-                      <div key={x.lead.id} onClick={function(){ setSelected(x.lead); }}
-                        style={{ fontSize:12, color:CREAM, cursor:"pointer", padding:"2px 0", display:"flex", justifyContent:"space-between" }}>
-                        <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:8 }}>{x.lead.projectName}</span>
-                        <span style={{ color:"#f59e0b", fontSize:11, flexShrink:0 }}>{x.days}d silent</span>
-                      </div>
-                    );
-                  })}
-                  {staleLeads.length > 5 && (
-                    <div onClick={function(){ setQuietExpanded(!quietExpanded); }}
-                      style={{ fontSize:11, fontWeight:600, color:"#f59e0b", marginTop:5, cursor:"pointer", userSelect:"none" }}>
-                      {quietExpanded ? "▲ Show less" : "▼ Show all " + staleLeads.length + " — tap each to open"}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
             {filtered.length===0
               ? <div style={{ padding:20, color:MUTED, fontSize:13, textAlign:"center" }}>No results</div>
               : groupByProm
@@ -2928,6 +2924,13 @@ function AppInner() {
       )}
       {showExport !== null && (
         <ExportModal text={showExport} count={leads.length} onClose={function(){ setShowExport(null); }} />
+      )}
+      {followUpPopup && (
+        <FollowUpDueModal
+          leads={followUpPopup}
+          onSelect={function(l){ setSelected(l); setFollowUpPopup(null); }}
+          onClose={function(){ setFollowUpPopup(null); }}
+        />
       )}
     </div>
     </>

@@ -117,8 +117,13 @@ cmd /c "set JAVA_HOME=D:\Android\jdk17&& set GRADLE_USER_HOME=D:\Android\gradle-
 
 ## UX features worth knowing before touching code
 
-- **Stale tracking:** `lastActivityDate` = max(createdAt, callLog, meetingLog dates);
-  active-pipeline leads silent ≥14 days get "Quiet Nd" amber tags + "GOING QUIET" banner.
+- **Follow-up due-today popup:** an in-app modal (`FollowUpDueModal`) pops up once per calendar
+  day, the moment a lead's `nextFollowUp` date equals today (active pipeline only), listing every
+  lead due. Gated by `localStorage["synregis_followup_popup_date"]` so it fires once/day regardless
+  of how many times the app is opened; independent of the OS-level browserNotif/appNotif toggles.
+  `lastActivityDate` (max of createdAt/callLog/meetingLog dates) still powers the plain
+  "Last Activity" info line on the lead detail view, but there is no more staleness/quiet alerting
+  — that feature (amber "Quiet Nd" tags + "GOING QUIET" banner) was removed 2026-07-26.
 - **Hierarchical filters:** Filters ▾ → Priority / Construction Stage / Region / **Missing info**
   (no promoteur, no phone, …) with live counts; active filters render as removable chips.
   All filters AND together with the pipeline chips and search.
@@ -126,8 +131,8 @@ cmd /c "set JAVA_HOME=D:\Android\jdk17&& set GRADLE_USER_HOME=D:\Android\gradle-
 - **Back-button sentinel:** while any modal/detail layer is open, one history entry is kept so
   the Android back button closes the top layer instead of quitting (`layers` array in AppInner).
   New modals MUST be added to that array.
-- **Per-device settings** in localStorage (`synregis_settings`): badge, banner, stale,
-  browserNotif (PC), appNotif + appNotifStale + notifTime (app).
+- **Per-device settings** in localStorage (`synregis_settings`): badge, banner,
+  browserNotif (PC), appNotif + notifTime (app).
 - Dark-first design: see Gotchas — never reintroduce light/white surfaces.
 
 ## Gotchas — learned the hard way (do / don't)
