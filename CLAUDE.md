@@ -28,7 +28,10 @@ maintained with Claude Code. Owner: Axel (axlrrn@gmail.com) — the only authori
   `promoteurFull`, `contactName`, `phone`, `units`, `unitDetails`, `amenities`, `projectStage`,
   `pipelineStage`, `priority`, `notes`, `callLog[]`/`meetingLog[]` (`{date, note}`),
   `nextFollowUp` (yyyy-mm-dd), `region`, `gpsCoords`, `attachments[]` (dead — no Storage),
-  `createdAt`.
+  `createdAt`. Completion estimate (optional, set either way — never both): `completionType`
+  (`""`/`"Month"`/`"Quarter"`), `completionMonth` (`yyyy-mm`, native `<input type="month">`) when
+  Month, `completionQuarter` (`Q1`-`Q4`) + `completionYear` when Quarter. `completionQuarterKey()`
+  in App.js normalizes either to a `"Q# YYYY"` key for filtering/grouping.
 - `config/app` — `regions[]` (editable list) and `geminiKey` (the Gemini API key, so it
   syncs across devices). Always write with `setDoc(..., {merge: true})`.
 - `pipelineStage` ∈ Prospecting, Proposal Sent, Negotiation, Due Diligence, Won, Lost, On Hold,
