@@ -1630,6 +1630,8 @@ function SettingsModal(props) {
   var [confirmRestore, setConfirmRestore] = useState(null); // a backup pending confirmation
   var [restoreMsg, setRestoreMsg] = useState(null);         // {ok, text}
   var [restoring, setRestoring] = useState(false);
+  var [backingUp, setBackingUp] = useState(false);
+  var [backupMsg, setBackupMsg] = useState(null);           // {ok, text}
   useEffect(function() {
     if (!props.onLoadBackups) return;
     var alive = true;
@@ -1648,6 +1650,18 @@ function SettingsModal(props) {
       setRestoreMsg({ ok:false, text:"Restore failed — " + ((e && e.message) || String(e)) });
     }
     setRestoring(false);
+  }
+  async function doBackupNow() {
+    setBackingUp(true); setBackupMsg(null);
+    try {
+      await props.onBackupNow();
+      var list = await props.onLoadBackups();
+      setBackups(list || []);
+      setBackupMsg({ ok:true, text:"Backup saved — today's snapshot is up to date." });
+    } catch(e) {
+      setBackupMsg({ ok:false, text:"Backup failed — " + ((e && e.message) || String(e)) });
+    }
+    setBackingUp(false);
   }
   function set(key, val) { props.onChange(Object.assign({}, s, { [key]: val })); }
   function toggle(key) { set(key, !s[key]); }
@@ -1785,6 +1799,12 @@ function SettingsModal(props) {
           <div style={{ fontSize:11, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
             A full snapshot of all {props.leadCount != null ? props.leadCount + " " : ""}projects is saved automatically every day and each time you close the app. Restoring re-adds and reverts projects to a snapshot — it never deletes anything you've added since.
           </div>
+          <button onClick={doBackupNow} disabled={backingUp}
+            style={{ padding:"7px 14px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent", color:GOLD,
+              cursor: backingUp ? "default" : "pointer", fontSize:12, fontWeight:700, marginBottom:10, opacity: backingUp?0.6:1 }}>
+            {backingUp ? "Backing up…" : "Back up now"}
+          </button>
+          {backupMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: backupMsg.ok ? "#10b981" : "#ef4444" }}>{backupMsg.text}</div>}
           {backupsErr && <div style={{ fontSize:11, color:"#ef4444", lineHeight:1.4, marginBottom:8 }}>{backupsErr}</div>}
           {restoreMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: restoreMsg.ok ? "#10b981" : "#ef4444" }}>{restoreMsg.text}</div>}
           {backups === null && !backupsErr && <div style={{ fontSize:12, color:MUTED }}>Loading backups…</div>}
@@ -2467,6 +2487,13 @@ function AppInner() {
       .sort(function(a, b){ return (b.savedAt || b.date || "").localeCompare(a.savedAt || a.date || ""); });
   }
 
+  // Manual, on-demand snapshot — same writeBackup() as the automatic ones, just
+  // triggered by a tap instead of a timer. Used as a pre-change safety checkpoint.
+  async function backupNow() {
+    if (!synced || !leads.length) throw new Error("Data hasn't finished syncing yet — wait a moment and try again.");
+    await writeBackup("manual");
+  }
+
   // Restore is NON-destructive: it re-adds/reverts every lead in the snapshot
   // (resurrecting anything deleted) but never removes leads created since.
   async function restoreBackup(backup) {
@@ -3007,6 +3034,7 @@ function AppInner() {
           onSaveGeminiKey={saveGeminiKey}
           onLoadBackups={loadBackups}
           onRestore={restoreBackup}
+          onBackupNow={backupNow}
           leadCount={leads.length}
           canInstall={!!installEvt}
           onInstall={installPwa}

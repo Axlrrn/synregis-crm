@@ -118,6 +118,38 @@ cmd /c "set JAVA_HOME=D:\Android\jdk17&& set GRADLE_USER_HOME=D:\Android\gradle-
   at the INITIAL_LEADS regex. Anything else is new.
 - Commit style: conventional-ish (`feat(...)`, `fix(...)`), Co-Authored-By Claude trailer.
 
+## Safety protocol — no data loss on updates
+
+Axel's data (his leads) lives in Firestore, not in this code — App.js only reads/renders it
+(`INITIAL_LEADS` is a one-time reseed used only if the whole `leads` collection is ever empty;
+it is never touched by a feature change). Still, follow this every time, no exceptions:
+
+1. **Before changing anything:** `git status` first — never start on top of unknown local
+   changes. Note the current lead count (visible in the header, "N Projects") so there's a
+   before-number to compare after.
+2. **Scope discipline:** a UI/feature change never touches Firestore read/write paths
+   (`onSnapshot`, `setDoc`, `updateDoc`, `deleteDoc`, `writeBatch`) unless the task specifically
+   requires it, and never edits `INITIAL_LEADS` content. If a change is UI-only, it is
+   structurally impossible for it to delete a lead — keep it that way.
+3. **Fresh checkpoint before any push:** trigger Settings → Backups → **Back up now** (writes
+   an immediate Firestore `backups/{today}` snapshot via `backupNow()`/`writeBackup("manual")`)
+   right before pushing, on top of the automatic daily + on-close snapshots. Restore is
+   non-destructive (merge — re-adds/reverts, never deletes anything added since).
+4. **Review the diff, don't blind-add:** `git diff --stat` + read the actual diff before
+   `git add`/commit. Never `git add -A` without reading `git status` first (this repo carries
+   local-only files like `.claude/launch.json` that must never be committed). If a diff touches
+   more lines than the task explains, stop and re-check before committing.
+5. **After pushing:** once Vercel deploys, load the live site (Claude-in-Chrome on Axel's
+   signed-in session, since the local preview can't get past Google sign-in) and confirm the
+   "N Projects" count still matches the before-number, and spot-check 2-3 leads (notes, call
+   log, next follow-up) render intact.
+6. **If a count or field ever looks wrong:** stop and say so immediately — do not assume it's
+   fine and move on. Remember gotcha #1 below: a rules/permissions error *looks* like data loss
+   but isn't; check that first before concluding anything is actually gone.
+7. **Rollback is one click:** every push is a Vercel deploy, and Vercel keeps every prior
+   deploy. Vercel dashboard → Deployments → pick the last good one → "Promote to Production"
+   instantly reverts the live site, independent of any Firestore restore.
+
 ## UX features worth knowing before touching code
 
 - **Follow-up due-today popup:** an in-app modal (`FollowUpDueModal`) pops up once per calendar
