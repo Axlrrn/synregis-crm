@@ -650,6 +650,47 @@ function Fld(props) {
   );
 }
 
+// Lets the user say a project will complete "Month" (exact) or "Quarter"
+// (looser — a year split into Q1-Q4), and fills in the matching sub-fields.
+function CompletionFld(props) {
+  var lead = props.lead;
+  var f = props.setField;
+  var s = { display:"flex", flexDirection:"column", gap:4, marginBottom:14 };
+  var ls = { fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:600 };
+  var inp = {
+    background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"8px 10px",
+    color:CREAM, fontSize:13, outline:"none", width:"100%", boxSizing:"border-box"
+  };
+  var years = [];
+  var y0 = new Date().getFullYear() - 1;
+  for (var i = 0; i < 8; i++) years.push(String(y0 + i));
+  return (
+    <div style={s}>
+      <label style={ls}>Completion Estimate</label>
+      <select value={lead.completionType||""} onChange={function(e){ f("completionType")(e.target.value); }} style={{...inp, marginBottom: lead.completionType ? 6 : 0}}>
+        <option value="">—</option>
+        <option value="Month">Month</option>
+        <option value="Quarter">Quarter</option>
+      </select>
+      {lead.completionType === "Month" && (
+        <input type="month" value={lead.completionMonth||""}
+          onChange={function(e){ f("completionMonth")(e.target.value); }} style={inp}/>
+      )}
+      {lead.completionType === "Quarter" && (
+        <div style={{ display:"flex", gap:8 }}>
+          <select value={lead.completionQuarter||""} onChange={function(e){ f("completionQuarter")(e.target.value); }} style={{...inp, flex:1}}>
+            <option value="">Quarter</option>
+            {QUARTERS.map(function(q){ return <option key={q} value={q}>{q}</option>; })}
+          </select>
+          <select value={lead.completionYear||""} onChange={function(e){ f("completionYear")(e.target.value); }} style={{...inp, flex:1}}>
+            <option value="">Year</option>
+            {years.map(function(y){ return <option key={y} value={y}>{y}</option>; })}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RegionEditModal(props) {
   var [list, setList] = useState(props.regions.slice());
@@ -736,6 +777,7 @@ function EditForm(props) {
           <Fld label="Unit Details" value={lead.unitDetails} onChange={f("unitDetails")} type="textarea"/>
           <Fld label="Amenities" value={lead.amenities} onChange={f("amenities")} type="textarea"/>
           <Fld label="Project Stage" value={lead.projectStage} onChange={f("projectStage")} type="select" options={PROJECT_STAGES}/>
+          <CompletionFld lead={lead} setField={f}/>
           <Fld label="Pipeline Stage" value={lead.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
           <Fld label="Priority" value={lead.priority||""} onChange={f("priority")} type="select" options={[""].concat(PRIORITIES)}/>
           <Fld label="Next Follow-Up" value={lead.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
@@ -758,7 +800,8 @@ function AddForm(props) {
     contactName:"", phone:"", units:"", unitDetails:"", amenities:"",
     projectStage:PROJECT_STAGES[0], pipelineStage:PIPELINE_STAGES[0],
     priority:"", notes:"", callLog:[], nextFollowUp:"", createdAt:"",
-    region:"", gpsCoords:""
+    region:"", gpsCoords:"",
+    completionType:"", completionMonth:"", completionQuarter:"", completionYear:""
   };
   var [form, setForm] = useState(function(){ return Object.assign({}, blank, props.initial || {}); });
   var [formError, setFormError] = useState("");
@@ -788,6 +831,7 @@ function AddForm(props) {
           <Fld label="Unit Details" value={form.unitDetails} onChange={f("unitDetails")} type="textarea"/>
           <Fld label="Amenities" value={form.amenities} onChange={f("amenities")} type="textarea"/>
           <Fld label="Project Stage" value={form.projectStage} onChange={f("projectStage")} type="select" options={PROJECT_STAGES}/>
+          <CompletionFld lead={form} setField={f}/>
           <Fld label="Pipeline Stage" value={form.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
           <Fld label="Priority" value={form.priority||""} onChange={f("priority")} type="select" options={[""].concat(PRIORITIES)}/>
           <Fld label="Next Follow-Up" value={form.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
@@ -1038,6 +1082,7 @@ function DetailPanel(props) {
         </div>
         <div style={sec}><div style={lbl}>Total Units</div><div style={val}>{lead.units||"-"}</div></div>
         <div style={sec}><div style={lbl}>Project Stage</div><div style={val}>{lead.projectStage||"-"}</div></div>
+        {formatCompletion(lead) && <div style={sec}><div style={lbl}>Completion Estimate</div><div style={val}>{formatCompletion(lead)}</div></div>}
         {lead.region && <div style={sec}><div style={lbl}>Region</div><div style={val}>{lead.region}</div></div>}
         {lead.gpsCoords && (
           <div style={sec}>
@@ -1171,6 +1216,40 @@ var MISSING_FIELDS = [
   { key: "gpsCoords",    label: "No GPS" },
 ];
 
+// ── Completion estimate helpers ────────────────────────────────────────────────
+// A lead's expected completion can be set either as an exact month or as a
+// looser year-quarter. For filtering (and display when only a quarter was
+// given) everything is normalized down to a "Q# YYYY" key.
+var MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+var QUARTERS = ["Q1","Q2","Q3","Q4"];
+function completionQuarterKey(lead) {
+  if (lead.completionType === "Quarter" && lead.completionQuarter && lead.completionYear) {
+    return lead.completionQuarter + " " + lead.completionYear;
+  }
+  if (lead.completionType === "Month" && lead.completionMonth) {
+    var parts = lead.completionMonth.split("-");
+    var m = parseInt(parts[1], 10);
+    if (parts[0] && m >= 1 && m <= 12) return "Q" + Math.ceil(m / 3) + " " + parts[0];
+  }
+  return "";
+}
+function completionSortKey(period) {
+  var parts = (period || "").split(" ");
+  var q = parseInt((parts[0] || "").replace("Q", ""), 10) || 0;
+  var y = parseInt(parts[1], 10) || 0;
+  return y * 10 + q;
+}
+// Human-readable version for the detail view — shows the exact month when
+// that's what was set, otherwise falls back to the quarter.
+function formatCompletion(lead) {
+  if (lead.completionType === "Month" && lead.completionMonth) {
+    var parts = lead.completionMonth.split("-");
+    var m = parseInt(parts[1], 10);
+    if (parts[0] && m >= 1 && m <= 12) return MONTH_NAMES[m - 1] + " " + parts[0];
+  }
+  return completionQuarterKey(lead);
+}
+
 function FilterMenu(props) {
   // Hierarchical dropdown: categories → submenu with options.
   var [view, setView] = useState("root");
@@ -1178,11 +1257,17 @@ function FilterMenu(props) {
   if (!props.open) return null;
 
   var v = props.values;
+  var completionOptions = (function(){
+    var seen = {};
+    props.leads.forEach(function(l){ var p = completionQuarterKey(l); if (p) seen[p] = true; });
+    return Object.keys(seen).sort(function(a,b){ return completionSortKey(a) - completionSortKey(b); });
+  })();
   var cats = [
-    { id:"priority", label:"Priority",           current: v.priority, options: FILTER_PRIORITIES },
-    { id:"stage",    label:"Construction Stage", current: v.stage,    options: PROJECT_STAGES },
-    { id:"region",   label:"Region",             current: v.region,   options: props.regions },
-    { id:"missing",  label:"Missing info",       current: v.missing === "All" ? "All" : (MISSING_FIELDS.find(function(m){ return m.key === v.missing; }) || {}).label,
+    { id:"priority",   label:"Priority",            current: v.priority,   options: FILTER_PRIORITIES },
+    { id:"stage",      label:"Construction Stage",  current: v.stage,      options: PROJECT_STAGES },
+    { id:"region",     label:"Region",               current: v.region,     options: props.regions },
+    { id:"completion", label:"Completion Period",    current: v.completion, options: completionOptions },
+    { id:"missing",    label:"Missing info",         current: v.missing === "All" ? "All" : (MISSING_FIELDS.find(function(m){ return m.key === v.missing; }) || {}).label,
       options: MISSING_FIELDS.map(function(m){ return m.label; }) },
   ];
   function optionValue(catId, label) {
@@ -1194,9 +1279,10 @@ function FilterMenu(props) {
     var value = optionValue(catId, label);
     return props.leads.filter(function(l){
       if (l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted") return false;
-      if (catId === "priority") return l.priority === value;
-      if (catId === "stage")    return l.projectStage === value;
-      if (catId === "region")   return l.region === value;
+      if (catId === "priority")    return l.priority === value;
+      if (catId === "stage")       return l.projectStage === value;
+      if (catId === "region")      return l.region === value;
+      if (catId === "completion")  return completionQuarterKey(l) === value;
       return !String(l[value] || "").trim();
     }).length;
   }
@@ -2037,6 +2123,7 @@ function AppInner() {
   var [filterPriority, setFilterPriority] = useState("All");
   var [filterStage, setFilterStage]       = useState("All");
   var [filterMissing, setFilterMissing]   = useState("All");
+  var [filterCompletion, setFilterCompletion] = useState("All");
   var [showFilters, setShowFilters]       = useState(false);
   var [showArchive, setShowArchive] = useState(false);
   var [showAdd, setShowAdd]           = useState(false);
@@ -2448,24 +2535,27 @@ function AppInner() {
     var matchSt  = filterStage === "All" || l.projectStage === filterStage;
     var matchReg = filterRegion === "All" || l.region === filterRegion;
     var matchMiss = filterMissing === "All" || !String(l[filterMissing] || "").trim();
+    var matchCompl = filterCompletion === "All" || completionQuarterKey(l) === filterCompletion;
     var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
     if (showArchive) return archived && matchQ;
-    return !archived && matchQ && matchP && matchPr && matchSt && matchReg && matchMiss;
+    return !archived && matchQ && matchP && matchPr && matchSt && matchReg && matchMiss && matchCompl;
   });
 
   function setFilter(category, value) {
     if (category === "clearAll") {
-      setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All");
+      setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All"); setFilterCompletion("All");
     }
-    else if (category === "priority") setFilterPriority(value);
-    else if (category === "stage")    setFilterStage(value);
-    else if (category === "region")   setFilterRegion(value);
-    else if (category === "missing")  setFilterMissing(value);
+    else if (category === "priority")    setFilterPriority(value);
+    else if (category === "stage")       setFilterStage(value);
+    else if (category === "region")      setFilterRegion(value);
+    else if (category === "missing")     setFilterMissing(value);
+    else if (category === "completion")  setFilterCompletion(value);
   }
   var activeFilters = [];
   if (filterPriority !== "All") activeFilters.push({ cat:"priority", label: filterPriority });
   if (filterStage !== "All")    activeFilters.push({ cat:"stage",    label: filterStage });
   if (filterRegion !== "All")   activeFilters.push({ cat:"region",   label: filterRegion });
+  if (filterCompletion !== "All") activeFilters.push({ cat:"completion", label: filterCompletion });
   if (filterMissing !== "All")  activeFilters.push({ cat:"missing",  label: (MISSING_FIELDS.find(function(m){ return m.key === filterMissing; }) || { label: filterMissing }).label });
 
   var counts = {};
@@ -2731,7 +2821,7 @@ function AppInner() {
                 </button>
                 <FilterMenu open={showFilters} onClose={function(){ setShowFilters(false); }}
                   leads={leads} regions={regions}
-                  values={{ priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing }}
+                  values={{ priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing, completion: filterCompletion }}
                   onChange={setFilter}/>
               </div>
               <button onClick={function(){ setAddPrefill(null); setShowAdd(true); }}
