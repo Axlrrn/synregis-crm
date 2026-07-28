@@ -1809,11 +1809,17 @@ function SettingsModal(props) {
           <div style={{ fontSize:11, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
             A full snapshot of all {props.leadCount != null ? props.leadCount + " " : ""}projects is saved automatically every day and each time you close the app. Restoring re-adds and reverts projects to a snapshot — it never deletes anything you've added since.
           </div>
-          <button onClick={doBackupNow} disabled={backingUp}
-            style={{ padding:"7px 14px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent", color:GOLD,
-              cursor: backingUp ? "default" : "pointer", fontSize:12, fontWeight:700, marginBottom:10, opacity: backingUp?0.6:1 }}>
-            {backingUp ? "Backing up…" : "Back up now"}
-          </button>
+          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+            <button onClick={doBackupNow} disabled={backingUp}
+              style={{ padding:"7px 14px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent", color:GOLD,
+                cursor: backingUp ? "default" : "pointer", fontSize:12, fontWeight:700, opacity: backingUp?0.6:1 }}>
+              {backingUp ? "Backing up…" : "Back up now"}
+            </button>
+            <button onClick={props.onExport}
+              style={{ padding:"7px 14px", borderRadius:6, border:"1px solid "+BORDER, background:"transparent", color:MUTED, cursor:"pointer", fontSize:12, fontWeight:700 }}>
+              Export JSON
+            </button>
+          </div>
           {backupMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: backupMsg.ok ? "#10b981" : "#ef4444" }}>{backupMsg.text}</div>}
           {backupsErr && <div style={{ fontSize:11, color:"#ef4444", lineHeight:1.4, marginBottom:8 }}>{backupsErr}</div>}
           {restoreMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: restoreMsg.ok ? "#10b981" : "#ef4444" }}>{restoreMsg.text}</div>}
@@ -3158,7 +3164,6 @@ function AppInner() {
           </div>
           <div style={{ padding:"8px 12px", borderTop:"1px solid "+BORDER, fontSize:11, color:MUTED, textAlign:"center" }}>
             {filtered.length} of {leads.length} shown
-            <button onClick={function(){exportData(leads, setShowExport);}} style={{ marginLeft:10, background:"none", border:"none", color:GOLD, cursor:"pointer", fontSize:11, textDecoration:"underline" }}>Export JSON</button>
           </div>
         </div>
 
@@ -3245,6 +3250,7 @@ function AppInner() {
           onRestore={restoreBackup}
           onBackupNow={backupNow}
           leadCount={leads.length}
+          onExport={function(){ setShowSettings(false); exportData(leads, setShowExport); }}
           canInstall={!!installEvt}
           onInstall={installPwa}
         />
