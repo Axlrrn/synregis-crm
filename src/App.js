@@ -112,6 +112,16 @@ function staleDays(lead) {
   return d !== null && d >= STALE_DAYS ? d : null;
 }
 
+// ── Focus (today's list) date helpers ─────────────────────────────────────────
+function todayStr() {
+  return new Date().toISOString().split("T")[0];
+}
+function shiftDateStr(d, delta) {
+  var dt = new Date(d + "T00:00:00");
+  dt.setDate(dt.getDate() + delta);
+  return dt.toISOString().split("T")[0];
+}
+
 // ── AI lead extraction (Gemini) ───────────────────────────────────────────────
 // Tries model aliases in order so the integration survives Google renames.
 var GEMINI_MODELS = ["gemini-flash-latest", "gemini-3-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
@@ -1790,6 +1800,125 @@ function LeadRow(props) {
   );
 }
 
+// ── Focus (today's list) ────────────────────────────────────────────────────
+// A separate day-by-day working list: pick a handful of projects to focus on
+// today, page to other days with ◀ ▶. Backed by focusLists/{yyyy-mm-dd} —
+// a day with no doc simply has an empty list, so every new day starts empty.
+function FocusView(props) {
+  var date = props.date;
+  var today = todayStr();
+  var dayLeads = props.leadIds
+    .map(function(id){ return props.leads.find(function(l){ return String(l.id) === String(id); }); })
+    .filter(Boolean);
+  var pickerResults = props.showPicker
+    ? props.leads.filter(function(l){
+        if (props.leadIds.indexOf(String(l.id)) !== -1) return false;
+        if (l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted") return false;
+        var q = props.pickerQuery.toLowerCase();
+        return !q || l.projectName.toLowerCase().includes(q) || (l.promoteur||"").toLowerCase().includes(q);
+      })
+    : [];
+  var dateLabel = (function(){
+    if (date === today) return "Today";
+    if (date === shiftDateStr(today, -1)) return "Yesterday";
+    if (date === shiftDateStr(today, 1)) return "Tomorrow";
+    return new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday:"short", day:"numeric", month:"short" });
+  })();
+  return (
+    <div style={{ display:"flex", flex:1, overflow:"hidden", position:"relative" }}>
+      {/* Left: day list */}
+      <div style={{ width:props.isMobile?"100%":300, flexShrink:0, borderRight:props.isMobile?"none":"1px solid "+BORDER, display:"flex", flexDirection:"column", background:CARD }}>
+        <div style={{ padding:"10px 12px", borderBottom:"1px solid "+BORDER, display:"flex", flexDirection:"column", gap:8 }}>
+          <button onClick={props.onBack}
+            style={{ alignSelf:"flex-start", padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13 }}>
+            ← Back
+          </button>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+            <button onClick={props.onPrevDay} title="Previous day"
+              style={{ padding:"6px 10px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:14 }}>
+              ◀
+            </button>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:GOLD }}>Focus — {dateLabel}</div>
+              <div style={{ fontSize:10, color:MUTED }}>{date}</div>
+            </div>
+            <button onClick={props.onNextDay} title="Next day"
+              style={{ padding:"6px 10px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:14 }}>
+              ▶
+            </button>
+          </div>
+          {date !== today && (
+            <button onClick={props.onToday}
+              style={{ padding:"5px 10px", borderRadius:6, border:"1px solid "+GOLD+"55", background:"transparent", color:GOLD, cursor:"pointer", fontSize:11 }}>
+              Jump to Today
+            </button>
+          )}
+          <button onClick={props.onTogglePicker}
+            style={{ padding:"7px 10px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:12 }}>
+            {props.showPicker ? "Close" : "+ Add project"}
+          </button>
+          {props.showPicker && (
+            <div style={{ border:"1px solid "+BORDER, borderRadius:6, background:CARD2, padding:8, maxHeight:220, overflowY:"auto" }}>
+              <input value={props.pickerQuery} onChange={function(e){ props.onPickerQuery(e.target.value); }}
+                placeholder="Search projects..." autoFocus
+                style={{ width:"100%", background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 9px", color:CREAM, fontSize:12, outline:"none", marginBottom:6, boxSizing:"border-box" }}/>
+              {pickerResults.length === 0
+                ? <div style={{ fontSize:12, color:MUTED, padding:"6px 2px" }}>No matches</div>
+                : pickerResults.slice(0,30).map(function(l){
+                    return (
+                      <div key={l.id} onClick={function(){ props.onAddProject(l.id); }}
+                        style={{ padding:"6px 8px", borderRadius:5, cursor:"pointer", fontSize:12, color:CREAM }}
+                        onMouseEnter={function(e){ e.currentTarget.style.background=CARD+"88"; }}
+                        onMouseLeave={function(e){ e.currentTarget.style.background="transparent"; }}>
+                        <div style={{ fontWeight:600 }}>{l.projectName}</div>
+                        <div style={{ color:MUTED, fontSize:11 }}>{l.promoteur}</div>
+                      </div>
+                    );
+                  })
+              }
+            </div>
+          )}
+        </div>
+        <div style={{ flex:1, overflowY:"auto" }}>
+          {dayLeads.length === 0
+            ? <div style={{ padding:20, color:MUTED, fontSize:13, textAlign:"center" }}>No projects added for this day yet.</div>
+            : dayLeads.map(function(l){
+                return (
+                  <div key={l.id} style={{ position:"relative" }}>
+                    <LeadRow lead={l} settings={props.settings} selected={props.selFull && props.selFull.id===l.id} onSelect={props.onSelect}/>
+                    <button onClick={function(e){ e.stopPropagation(); props.onRemoveProject(l.id); }}
+                      title="Remove from today's list"
+                      style={{ position:"absolute", top:10, right:10, background:"none", border:"none", color:MUTED, cursor:"pointer", fontSize:14, lineHeight:1, padding:2 }}>
+                      ✕
+                    </button>
+                  </div>
+                );
+              })
+          }
+        </div>
+        <div style={{ padding:"8px 12px", borderTop:"1px solid "+BORDER, fontSize:11, color:MUTED, textAlign:"center" }}>
+          {dayLeads.length} project{dayLeads.length===1?"":"s"} for this day
+        </div>
+      </div>
+
+      {/* Right: detail panel — same behavior as the main pipeline view */}
+      {(!props.isMobile || props.selFull) && (
+        <div style={{ flex:1, display:"flex", flexDirection:"column", background:CARD, overflow:"hidden", ...(props.isMobile&&props.selFull?{position:"fixed",inset:0,zIndex:200,overflowY:"auto"}:{}) }}>
+          {props.selFull
+            ? <div style={{display:"flex", flexDirection:"column", height:"100%"}}>
+                <div style={{padding:"10px 16px", borderBottom:"1px solid "+BORDER, flexShrink:0}}>
+                  <button onClick={function(){ props.onSelect(null); }} style={{padding:"6px 14px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:13}}>← Back</button>
+                </div>
+                <DetailPanel lead={props.selFull} allLeads={props.leads} onEdit={props.onEdit} onCallLog={props.onCallLog} onMeetingLog={props.onMeetingLog} onSelect={props.onSelect} onDelete={props.onDelete}/>
+              </div>
+            : <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>Select a project to view details</div>
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 // ── Splash Screen ─────────────────────────────────────────────────────────────
 function SplashScreen({ visible }) {
@@ -1994,6 +2123,11 @@ function AppInner() {
   var [settings, setSettings]             = useState(loadSettings);
   var [showSplash, setShowSplash]         = useState(true);
   var [groupByProm, setGroupByProm]       = useState(false);
+  var [showFocus, setShowFocus]             = useState(false);
+  var [focusDate, setFocusDate]             = useState(todayStr);
+  var [focusLeadIds, setFocusLeadIds]       = useState([]);
+  var [showFocusPicker, setShowFocusPicker] = useState(false);
+  var [focusPickerQuery, setFocusPickerQuery] = useState("");
   var [quietExpanded, setQuietExpanded]   = useState(false); // GOING QUIET banner: show all stale leads, not just the first 5
   var [appUpdate, setAppUpdate]           = useState(null); // {versionName, url} when a newer APK exists
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
@@ -2064,6 +2198,17 @@ function AppInner() {
     );
     return function() { unsub(); };
   }, []);
+
+  // ── Focus (today's list): subscribe to the currently-viewed day only ──────
+  useEffect(function() {
+    if (!showFocus) return;
+    var ref = doc(db, "focusLists", focusDate);
+    var unsub = onSnapshot(ref, function(snap) {
+      var data = snap.exists() ? snap.data() : null;
+      setFocusLeadIds((data && data.leadIds) || []);
+    }, function(err) { console.error("Focus list error:", err); });
+    return function() { unsub(); };
+  }, [showFocus, focusDate]);
 
   // ── Load/save custom regions + AI key ──────────────────────────────────────
   useEffect(function() {
@@ -2320,6 +2465,8 @@ function AppInner() {
   if (editLead)         layers.push(function(){ setEditLead(null); setEditDraft(null); setSyncContact(false); });
   if (showAdd)          layers.push(function(){ setShowAdd(false); });
   if (selected)         layers.push(function(){ setSelected(null); });
+  if (showFocusPicker)  layers.push(function(){ setShowFocusPicker(false); });
+  if (showFocus)        layers.push(function(){ closeFocus(); });
   layersRef.current = layers;
 
   useEffect(function() {
@@ -2348,6 +2495,35 @@ function AppInner() {
     setRegions(list);
     setShowEditRegions(false);
     try { await setDoc(doc(db, "config", "app"), { regions: list }, { merge: true }); } catch(e) {}
+  }
+
+  // ── Focus (today's list) ───────────────────────────────────────────────────
+  function openFocus() {
+    setFocusDate(todayStr());
+    setShowFocusPicker(false);
+    setFocusPickerQuery("");
+    setSelected(null);
+    setShowFocus(true);
+  }
+  function closeFocus() {
+    setShowFocus(false);
+    setShowFocusPicker(false);
+    setFocusPickerQuery("");
+    setSelected(null);
+  }
+  function shiftFocusDay(delta) {
+    setFocusDate(function(d){ return shiftDateStr(d, delta); });
+    setSelected(null);
+  }
+  async function addToFocusList(leadId) {
+    try {
+      await setDoc(doc(db, "focusLists", focusDate), { leadIds: arrayUnion(String(leadId)) }, { merge: true });
+    } catch(e) { console.error("Add to focus failed:", e); }
+  }
+  async function removeFromFocusList(leadId) {
+    try {
+      await updateDoc(doc(db, "focusLists", focusDate), { leadIds: arrayRemove(String(leadId)) });
+    } catch(e) { console.error("Remove from focus failed:", e); }
   }
 
   // ── Derived state ──────────────────────────────────────────────────────────
@@ -2606,6 +2782,32 @@ function AppInner() {
         </div>
       )}
 
+      {showFocus ? (
+        <FocusView
+          date={focusDate}
+          leadIds={focusLeadIds}
+          leads={leads}
+          settings={settings}
+          selFull={selFull}
+          isMobile={isMobile}
+          onSelect={function(x){ setSelected(x); }}
+          onBack={closeFocus}
+          onPrevDay={function(){ shiftFocusDay(-1); }}
+          onNextDay={function(){ shiftFocusDay(1); }}
+          onToday={function(){ setFocusDate(todayStr()); setSelected(null); }}
+          showPicker={showFocusPicker}
+          onTogglePicker={function(){ setShowFocusPicker(!showFocusPicker); setFocusPickerQuery(""); }}
+          pickerQuery={focusPickerQuery}
+          onPickerQuery={setFocusPickerQuery}
+          onAddProject={addToFocusList}
+          onRemoveProject={removeFromFocusList}
+          onEdit={startEdit}
+          onCallLog={setCallLogLead}
+          onMeetingLog={setMeetingLogLead}
+          onDelete={deleteLead}
+        />
+      ) : (
+      <>
       {/* Stage filter bar */}
       <div style={{ display:"flex", gap:6, padding:"10px 16px", flexShrink:0, overflowX:"auto", background:CARD }}>
         {PIPELINE_STAGES.map(function(s){
@@ -2677,6 +2879,11 @@ function AppInner() {
                 title="Group projects by promoteur"
                 style={{ flex:1, padding:"7px 10px", borderRadius:6, border:"1px solid "+(groupByProm?GOLD:BORDER), background:groupByProm?GOLD:CARD2, color:groupByProm?NAVY:MUTED, cursor:"pointer", fontSize:11, fontWeight:groupByProm?700:400 }}>
                 Group by promoteur
+              </button>
+              <button onClick={openFocus}
+                title="Today's focus list"
+                style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+GOLD+"66", background:"transparent", color:GOLD, cursor:"pointer", fontSize:11, fontWeight:600, flexShrink:0 }}>
+                Focus
               </button>
               <button onClick={function(){ setShowEditRegions(true); }}
                 style={{ padding:"7px 10px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:MUTED, cursor:"pointer", fontSize:11, flexShrink:0 }}>
@@ -2792,6 +2999,8 @@ function AppInner() {
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* Modals */}
       {showAdd && <AddForm allLeads={leads} regions={regions} initial={addPrefill} onAdd={addLead}
