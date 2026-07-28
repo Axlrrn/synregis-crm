@@ -6,16 +6,11 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.hardware.biometrics.BiometricManager;
-import android.hardware.biometrics.BiometricPrompt;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.CancellationSignal;
 import android.os.Message;
 import android.util.Base64;
-import android.view.View;
-import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -23,8 +18,6 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-
-import android.widget.FrameLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -37,8 +30,6 @@ public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 4318;
     private static final int MAX_SHARED_IMAGE_BYTES = 8 * 1024 * 1024;
 
-    private FrameLayout root;
-    private View lockCover;
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private String sharedImagePacked; // "mime;base64" for the web app to pull via the bridge
@@ -52,8 +43,8 @@ public class MainActivity extends Activity {
             return packed == null ? "" : packed;
         }
 
-        // Credentials encrypted with a hardware-keystore key; the app itself is
-        // fingerprint-gated, so unlock → auto sign-in with no typing.
+        // Credentials encrypted with a hardware-keystore key, so opening the
+        // app auto signs-in with no typing.
         @JavascriptInterface
         public void storeCredentials(String email, String password) {
             try {
@@ -186,15 +177,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         webView = new WebView(this);
-        // Navy cover hides the app until the fingerprint check passes;
-        // the WebView loads underneath so unlock feels instant.
-        root = new FrameLayout(this);
-        root.addView(webView);
-        lockCover = new View(this);
-        lockCover.setBackgroundColor(0xFF08111F);
-        root.addView(lockCover, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        setContentView(root);
+        setContentView(webView);
 
         WebSettings s = webView.getSettings();
         s.setJavaScriptEnabled(true);
@@ -255,53 +238,6 @@ public class MainActivity extends Activity {
         });
 
         webView.loadUrl(urlForIntent(getIntent()));
-        requestUnlock();
-    }
-
-    // ── Fingerprint gate (banking-app style) ────────────────────────────────
-    private void requestUnlock() {
-        if (Build.VERSION.SDK_INT < 29) { unlock(); return; }
-        BiometricManager bm = getSystemService(BiometricManager.class);
-        boolean available;
-        if (Build.VERSION.SDK_INT >= 30) {
-            available = bm != null && bm.canAuthenticate(
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK
-                            | BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-                    == BiometricManager.BIOMETRIC_SUCCESS;
-        } else {
-            available = bm != null && bm.canAuthenticate() == BiometricManager.BIOMETRIC_SUCCESS;
-        }
-        if (!available) { unlock(); return; } // no biometrics enrolled → open normally
-
-        BiometricPrompt.Builder builder = new BiometricPrompt.Builder(this)
-                .setTitle("SynRegis CRM")
-                .setSubtitle("Déverrouillez pour continuer");
-        if (Build.VERSION.SDK_INT >= 30) {
-            builder.setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_WEAK
-                            | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
-        } else {
-            builder.setDeviceCredentialAllowed(true); // PIN/pattern fallback on API 29
-        }
-        builder.build().authenticate(new CancellationSignal(), getMainExecutor(),
-                new BiometricPrompt.AuthenticationCallback() {
-                    @Override
-                    public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-                        unlock();
-                    }
-
-                    @Override
-                    public void onAuthenticationError(int errorCode, CharSequence errString) {
-                        finish(); // cancelled or locked out → close the app
-                    }
-                });
-    }
-
-    private void unlock() {
-        if (lockCover != null) {
-            root.removeView(lockCover);
-            lockCover = null;
-        }
     }
 
     private String urlForIntent(Intent intent) {

@@ -16,7 +16,7 @@ maintained with Claude Code. Owner: Axel (axlrrn@gmail.com) — the only authori
   No local `.vercel` link — never run `vercel link` here. Free plan: max 100 deploys/day,
   so batch changes into one push.
 - **Android app:** WebView wrapper in **`android/`** — displays the production site, adds
-  native capabilities (share-target, fingerprint, credentials, notifications). Distributed
+  native capabilities (share-target, credentials, notifications). Distributed
   as a sideloaded APK at **`/synregis.apk`** (copied into `public/`, served by Vercel).
 - **AI extraction:** Google **Gemini API** called directly from the browser
   (`generativelanguage.googleapis.com`), free tier.
@@ -47,9 +47,10 @@ maintained with Claude Code. Owner: Axel (axlrrn@gmail.com) — the only authori
   `allow read, write: if request.auth != null && request.auth.token.email == 'axlrrn@gmail.com'`.
   Adding a user means updating BOTH. Rules were set 2026-06-12 after the test-mode expiry
   incident (see Gotchas).
-- **In the app:** fingerprint gate on open (native BiometricPrompt, phone-PIN fallback),
-  then silent auto sign-in using credentials encrypted with an Android-Keystore AES/GCM key.
-  Sessions never expire on their own. The SIGN OUT button is web-only (hidden in-app).
+- **In the app:** opens straight in, no unlock step — silent auto sign-in using credentials
+  encrypted with an Android-Keystore AES/GCM key. Sessions never expire on their own. The
+  SIGN OUT button is web-only (hidden in-app). (A fingerprint gate on open existed through
+  mid-2026; removed at Axel's request — open access was preferred over the extra tap.)
 - "Forgot password?" on the sign-in screen → Firebase reset email.
 
 ## AI lead extraction (Gemini)
