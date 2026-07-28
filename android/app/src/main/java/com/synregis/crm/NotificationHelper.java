@@ -85,26 +85,15 @@ public class NotificationHelper {
                     }
                 }
             }
-            JSONArray stale = payload.optJSONArray("staleNames");
-            boolean includeStale = payload.optBoolean("includeStale", false);
-            int staleCount = (includeStale && stale != null) ? stale.length() : 0;
+            if (due.isEmpty()) return; // nothing due today
 
-            if (due.isEmpty() && staleCount == 0) return; // nothing to say today
-
-            String title;
+            String title = due.size() + (due.size() > 1 ? " relances dues" : " relance due");
             StringBuilder text = new StringBuilder();
-            if (!due.isEmpty()) {
-                title = due.size() + (due.size() > 1 ? " relances dues" : " relance due");
-                for (int i = 0; i < Math.min(3, due.size()); i++) {
-                    if (i > 0) text.append(", ");
-                    text.append(due.get(i));
-                }
-                if (due.size() > 3) text.append("…");
-                if (staleCount > 0) text.append(" • ").append(staleCount).append(" leads silencieux");
-            } else {
-                title = staleCount + " leads sans activité";
-                text.append("Pensez à relancer vos prospects silencieux");
+            for (int i = 0; i < Math.min(3, due.size()); i++) {
+                if (i > 0) text.append(", ");
+                text.append(due.get(i));
             }
+            if (due.size() > 3) text.append("…");
 
             ensureChannel(ctx);
             Intent open = new Intent(ctx, MainActivity.class);

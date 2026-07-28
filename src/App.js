@@ -58,7 +58,7 @@ const INP    = "#091525";
 
 const PIPELINE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence","Won","Lost","On Hold","Unwanted"];
 const DEFAULT_REGIONS = ["North-West","North-Center","North-East","South-West","South-Center","South-East","Center-West","Center-East"];
-const PROJECT_STAGES  = ["Pre-Launch/Off-Plan","Permitting & Planning","Under Construction","Finishing Works","Near Delivery","Delivered & Occupied","Stalled/Suspended"];
+const PROJECT_STAGES  = ["Pre-Launch/Off-Plan","Permitting & Planning","Under Construction","Finishing Works","Near Delivery","Delivered & Occupied","Stalled/Suspended","Unknown"];
 const PRIORITIES      = ["Top Priority", "High", "Warm", "Cold", "Inbound Only"];
 
 const PC = {
@@ -77,7 +77,7 @@ const LOGO_SRC = "/logo_dark.png";
 if (typeof Image !== "undefined") { try { var _logoPreload = new Image(); _logoPreload.src = LOGO_SRC; } catch (e) {} }
 
 // ── Settings helpers ──────────────────────────────────────────────────────────
-var DEFAULT_SETTINGS = { badge: true, banner: true, stale: true, browserNotif: false, appNotif: false, appNotifStale: false, notifTime: "09:00" };
+var DEFAULT_SETTINGS = { badge: true, banner: true, browserNotif: false, appNotif: false, notifTime: "09:00" };
 function loadSettings() {
   try { return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem("synregis_settings") || "{}")); }
   catch(e) { return Object.assign({}, DEFAULT_SETTINGS); }
@@ -86,9 +86,28 @@ function saveSettingsLS(s) {
   try { localStorage.setItem("synregis_settings", JSON.stringify(s)); } catch(e) {}
 }
 
-// ── Activity / staleness helpers ──────────────────────────────────────────────
-var STALE_DAYS = 14;
-var ACTIVE_STAGES = ["Prospecting","Proposal Sent","Negotiation","Due Diligence"];
+// ── PWA install (desktop/PC) ──────────────────────────────────────────────────
+// Chrome/Edge fire `beforeinstallprompt` once, often before React mounts. Stash
+// the event at module load so the Settings "Install on this PC" button can fire it.
+var _deferredInstall = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", function(e){
+    e.preventDefault();
+    _deferredInstall = e;
+    window.dispatchEvent(new Event("synregis-installable"));
+  });
+  window.addEventListener("appinstalled", function(){
+    _deferredInstall = null;
+    window.dispatchEvent(new Event("synregis-installed"));
+  });
+}
+function isStandalone() {
+  if (typeof window === "undefined") return false;
+  return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+    || window.navigator.standalone === true;
+}
+
+// ── Activity helpers ───────────────────────────────────────────────────────────
 function lastActivityDate(lead) {
   var dates = [];
   if (lead.createdAt) dates.push(lead.createdAt);
@@ -104,12 +123,6 @@ function daysSince(dateStr) {
   if (isNaN(d.getTime())) return null;
   var diff = Math.floor((Date.now() - d.getTime()) / 86400000);
   return diff < 0 ? 0 : diff;
-}
-// Days of silence on an active-pipeline lead, or null if not stale.
-function staleDays(lead) {
-  if (ACTIVE_STAGES.indexOf(lead.pipelineStage) === -1) return null;
-  var d = daysSince(lastActivityDate(lead));
-  return d !== null && d >= STALE_DAYS ? d : null;
 }
 
 // ── Focus (today's list) date helpers ─────────────────────────────────────────
@@ -451,6 +464,40 @@ function ExportModal(props) {
   );
 }
 
+// Pops up once, the day a lead's Next Follow-Up date arrives, listing what's due.
+function FollowUpDueModal(props) {
+  var due = props.leads || [];
+  var ovl = { position:"fixed", inset:0, background:"#000000aa", zIndex:1200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 };
+  var box = { background:CARD, border:"1px solid "+GOLD+"66", borderRadius:12, padding:24, width:400, maxWidth:"92vw", maxHeight:"88vh", overflowY:"auto" };
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget) props.onClose(); }}>
+      <div style={box}>
+        <div style={{ fontSize:16, fontWeight:700, color:GOLD, marginBottom:4 }}>
+          Follow-up{due.length > 1 ? "s" : ""} due today
+        </div>
+        <div style={{ fontSize:12, color:MUTED, marginBottom:16 }}>
+          {due.length} project{due.length > 1 ? "s" : ""} scheduled for today.
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:20 }}>
+          {due.map(function(l){
+            return (
+              <div key={l.id} onClick={function(){ props.onSelect(l); }}
+                style={{ padding:"10px 12px", borderRadius:8, background:CARD2, border:"1px solid "+BORDER, cursor:"pointer" }}>
+                <div style={{ fontSize:13, fontWeight:600, color:CREAM }}>{l.projectName}</div>
+                <div style={{ fontSize:11, color:MUTED, marginTop:2 }}>{l.promoteur || l.location || ""}</div>
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={props.onClose}
+          style={{ width:"100%", padding:"9px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Map an arbitrary JSON object (our own export, or a loosely-shaped one) into the
 // {projectName, location, ...} fields shape the extraction pipeline consumes.
 // `id` becomes `existingId` so re-importing our own export matches existing leads.
@@ -613,6 +660,47 @@ function Fld(props) {
   );
 }
 
+// Lets the user say a project will complete "Month" (exact) or "Quarter"
+// (looser — a year split into Q1-Q4), and fills in the matching sub-fields.
+function CompletionFld(props) {
+  var lead = props.lead;
+  var f = props.setField;
+  var s = { display:"flex", flexDirection:"column", gap:4, marginBottom:14 };
+  var ls = { fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:600 };
+  var inp = {
+    background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"8px 10px",
+    color:CREAM, fontSize:13, outline:"none", width:"100%", boxSizing:"border-box"
+  };
+  var years = [];
+  var y0 = new Date().getFullYear() - 1;
+  for (var i = 0; i < 8; i++) years.push(String(y0 + i));
+  return (
+    <div style={s}>
+      <label style={ls}>Completion Estimate</label>
+      <select value={lead.completionType||""} onChange={function(e){ f("completionType")(e.target.value); }} style={{...inp, marginBottom: lead.completionType ? 6 : 0}}>
+        <option value="">—</option>
+        <option value="Month">Month</option>
+        <option value="Quarter">Quarter</option>
+      </select>
+      {lead.completionType === "Month" && (
+        <input type="month" value={lead.completionMonth||""}
+          onChange={function(e){ f("completionMonth")(e.target.value); }} style={inp}/>
+      )}
+      {lead.completionType === "Quarter" && (
+        <div style={{ display:"flex", gap:8 }}>
+          <select value={lead.completionQuarter||""} onChange={function(e){ f("completionQuarter")(e.target.value); }} style={{...inp, flex:1}}>
+            <option value="">Quarter</option>
+            {QUARTERS.map(function(q){ return <option key={q} value={q}>{q}</option>; })}
+          </select>
+          <select value={lead.completionYear||""} onChange={function(e){ f("completionYear")(e.target.value); }} style={{...inp, flex:1}}>
+            <option value="">Year</option>
+            {years.map(function(y){ return <option key={y} value={y}>{y}</option>; })}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RegionEditModal(props) {
   var [list, setList] = useState(props.regions.slice());
@@ -699,6 +787,7 @@ function EditForm(props) {
           <Fld label="Unit Details" value={lead.unitDetails} onChange={f("unitDetails")} type="textarea"/>
           <Fld label="Amenities" value={lead.amenities} onChange={f("amenities")} type="textarea"/>
           <Fld label="Project Stage" value={lead.projectStage} onChange={f("projectStage")} type="select" options={PROJECT_STAGES}/>
+          <CompletionFld lead={lead} setField={f}/>
           <Fld label="Pipeline Stage" value={lead.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
           <Fld label="Priority" value={lead.priority||""} onChange={f("priority")} type="select" options={[""].concat(PRIORITIES)}/>
           <Fld label="Next Follow-Up" value={lead.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
@@ -721,7 +810,8 @@ function AddForm(props) {
     contactName:"", phone:"", units:"", unitDetails:"", amenities:"",
     projectStage:PROJECT_STAGES[0], pipelineStage:PIPELINE_STAGES[0],
     priority:"", notes:"", callLog:[], nextFollowUp:"", createdAt:"",
-    region:"", gpsCoords:""
+    region:"", gpsCoords:"",
+    completionType:"", completionMonth:"", completionQuarter:"", completionYear:""
   };
   var [form, setForm] = useState(function(){ return Object.assign({}, blank, props.initial || {}); });
   var [formError, setFormError] = useState("");
@@ -751,6 +841,7 @@ function AddForm(props) {
           <Fld label="Unit Details" value={form.unitDetails} onChange={f("unitDetails")} type="textarea"/>
           <Fld label="Amenities" value={form.amenities} onChange={f("amenities")} type="textarea"/>
           <Fld label="Project Stage" value={form.projectStage} onChange={f("projectStage")} type="select" options={PROJECT_STAGES}/>
+          <CompletionFld lead={form} setField={f}/>
           <Fld label="Pipeline Stage" value={form.pipelineStage} onChange={f("pipelineStage")} type="select" options={PIPELINE_STAGES}/>
           <Fld label="Priority" value={form.priority||""} onChange={f("priority")} type="select" options={[""].concat(PRIORITIES)}/>
           <Fld label="Next Follow-Up" value={form.nextFollowUp} onChange={f("nextFollowUp")} type="date"/>
@@ -1001,6 +1092,7 @@ function DetailPanel(props) {
         </div>
         <div style={sec}><div style={lbl}>Total Units</div><div style={val}>{lead.units||"-"}</div></div>
         <div style={sec}><div style={lbl}>Project Stage</div><div style={val}>{lead.projectStage||"-"}</div></div>
+        {formatCompletion(lead) && <div style={sec}><div style={lbl}>Completion Estimate</div><div style={val}>{formatCompletion(lead)}</div></div>}
         {lead.region && <div style={sec}><div style={lbl}>Region</div><div style={val}>{lead.region}</div></div>}
         {lead.gpsCoords && (
           <div style={sec}>
@@ -1016,13 +1108,11 @@ function DetailPanel(props) {
         {(function(){
           var last = lastActivityDate(lead);
           var d = daysSince(last);
-          var stale = staleDays(lead);
           return (
             <div style={sec}>
               <div style={lbl}>Last Activity</div>
-              <div style={{ ...val, color: stale !== null ? "#f59e0b" : CREAM }}>
+              <div style={val}>
                 {last ? last + " (" + (d === 0 ? "today" : d + "d ago") + ")" : "-"}
-                {stale !== null ? " — going quiet" : ""}
               </div>
             </div>
           );
@@ -1136,6 +1226,40 @@ var MISSING_FIELDS = [
   { key: "gpsCoords",    label: "No GPS" },
 ];
 
+// ── Completion estimate helpers ────────────────────────────────────────────────
+// A lead's expected completion can be set either as an exact month or as a
+// looser year-quarter. For filtering (and display when only a quarter was
+// given) everything is normalized down to a "Q# YYYY" key.
+var MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+var QUARTERS = ["Q1","Q2","Q3","Q4"];
+function completionQuarterKey(lead) {
+  if (lead.completionType === "Quarter" && lead.completionQuarter && lead.completionYear) {
+    return lead.completionQuarter + " " + lead.completionYear;
+  }
+  if (lead.completionType === "Month" && lead.completionMonth) {
+    var parts = lead.completionMonth.split("-");
+    var m = parseInt(parts[1], 10);
+    if (parts[0] && m >= 1 && m <= 12) return "Q" + Math.ceil(m / 3) + " " + parts[0];
+  }
+  return "";
+}
+function completionSortKey(period) {
+  var parts = (period || "").split(" ");
+  var q = parseInt((parts[0] || "").replace("Q", ""), 10) || 0;
+  var y = parseInt(parts[1], 10) || 0;
+  return y * 10 + q;
+}
+// Human-readable version for the detail view — shows the exact month when
+// that's what was set, otherwise falls back to the quarter.
+function formatCompletion(lead) {
+  if (lead.completionType === "Month" && lead.completionMonth) {
+    var parts = lead.completionMonth.split("-");
+    var m = parseInt(parts[1], 10);
+    if (parts[0] && m >= 1 && m <= 12) return MONTH_NAMES[m - 1] + " " + parts[0];
+  }
+  return completionQuarterKey(lead);
+}
+
 function FilterMenu(props) {
   // Hierarchical dropdown: categories → submenu with options.
   var [view, setView] = useState("root");
@@ -1143,11 +1267,17 @@ function FilterMenu(props) {
   if (!props.open) return null;
 
   var v = props.values;
+  var completionOptions = (function(){
+    var seen = {};
+    props.leads.forEach(function(l){ var p = completionQuarterKey(l); if (p) seen[p] = true; });
+    return Object.keys(seen).sort(function(a,b){ return completionSortKey(a) - completionSortKey(b); });
+  })();
   var cats = [
-    { id:"priority", label:"Priority",           current: v.priority, options: FILTER_PRIORITIES },
-    { id:"stage",    label:"Construction Stage", current: v.stage,    options: PROJECT_STAGES },
-    { id:"region",   label:"Region",             current: v.region,   options: props.regions },
-    { id:"missing",  label:"Missing info",       current: v.missing === "All" ? "All" : (MISSING_FIELDS.find(function(m){ return m.key === v.missing; }) || {}).label,
+    { id:"priority",   label:"Priority",            current: v.priority,   options: FILTER_PRIORITIES },
+    { id:"stage",      label:"Construction Stage",  current: v.stage,      options: PROJECT_STAGES },
+    { id:"region",     label:"Region",               current: v.region,     options: props.regions },
+    { id:"completion", label:"Completion Period",    current: v.completion, options: completionOptions },
+    { id:"missing",    label:"Missing info",         current: v.missing === "All" ? "All" : (MISSING_FIELDS.find(function(m){ return m.key === v.missing; }) || {}).label,
       options: MISSING_FIELDS.map(function(m){ return m.label; }) },
   ];
   function optionValue(catId, label) {
@@ -1159,9 +1289,10 @@ function FilterMenu(props) {
     var value = optionValue(catId, label);
     return props.leads.filter(function(l){
       if (l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted") return false;
-      if (catId === "priority") return l.priority === value;
-      if (catId === "stage")    return l.projectStage === value;
-      if (catId === "region")   return l.region === value;
+      if (catId === "priority")    return l.priority === value;
+      if (catId === "stage")       return l.projectStage === value;
+      if (catId === "region")      return l.region === value;
+      if (catId === "completion")  return completionQuarterKey(l) === value;
       return !String(l[value] || "").trim();
     }).length;
   }
@@ -1509,6 +1640,8 @@ function SettingsModal(props) {
   var [confirmRestore, setConfirmRestore] = useState(null); // a backup pending confirmation
   var [restoreMsg, setRestoreMsg] = useState(null);         // {ok, text}
   var [restoring, setRestoring] = useState(false);
+  var [backingUp, setBackingUp] = useState(false);
+  var [backupMsg, setBackupMsg] = useState(null);           // {ok, text}
   useEffect(function() {
     if (!props.onLoadBackups) return;
     var alive = true;
@@ -1527,6 +1660,18 @@ function SettingsModal(props) {
       setRestoreMsg({ ok:false, text:"Restore failed — " + ((e && e.message) || String(e)) });
     }
     setRestoring(false);
+  }
+  async function doBackupNow() {
+    setBackingUp(true); setBackupMsg(null);
+    try {
+      await props.onBackupNow();
+      var list = await props.onLoadBackups();
+      setBackups(list || []);
+      setBackupMsg({ ok:true, text:"Backup saved — today's snapshot is up to date." });
+    } catch(e) {
+      setBackupMsg({ ok:false, text:"Backup failed — " + ((e && e.message) || String(e)) });
+    }
+    setBackingUp(false);
   }
   function set(key, val) { props.onChange(Object.assign({}, s, { [key]: val })); }
   function toggle(key) { set(key, !s[key]); }
@@ -1594,8 +1739,6 @@ function SettingsModal(props) {
           checked={s.badge} onChange={function(){ toggle("badge"); }}/>
         <ToggleRow label="Due Today banner" sub="Summary strip at top of the leads list"
           checked={s.banner} onChange={function(){ toggle("banner"); }}/>
-        <ToggleRow label="Stale lead alerts" sub={"Amber tag on active leads with no call or meeting logged for " + STALE_DAYS + "+ days"}
-          checked={s.stale} onChange={function(){ toggle("stale"); }}/>
 
         <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginTop:16, marginBottom:4, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
           {inAppSettings ? "Phone Notifications" : "Notifications"}
@@ -1618,8 +1761,6 @@ function SettingsModal(props) {
                     style={{ background:INP, border:"1px solid "+BORDER, borderRadius:6, padding:"6px 10px", color:CREAM, fontSize:13, outline:"none" }}/>
                   <span style={{ fontSize:11, color:MUTED }}>daily</span>
                 </div>
-                <ToggleRow label="Include quiet leads" sub={"Add the count of leads silent for " + STALE_DAYS + "+ days to the daily reminder"}
-                  checked={s.appNotifStale} onChange={function(){ toggle("appNotifStale"); }}/>
               </>
             )}
             <div style={{ fontSize:11, color:MUTED, marginTop:10, lineHeight:1.5 }}>
@@ -1668,6 +1809,12 @@ function SettingsModal(props) {
           <div style={{ fontSize:11, color:MUTED, marginBottom:10, lineHeight:1.5 }}>
             A full snapshot of all {props.leadCount != null ? props.leadCount + " " : ""}projects is saved automatically every day and each time you close the app. Restoring re-adds and reverts projects to a snapshot — it never deletes anything you've added since.
           </div>
+          <button onClick={doBackupNow} disabled={backingUp}
+            style={{ padding:"7px 14px", borderRadius:6, border:"1px solid "+GOLD, background:"transparent", color:GOLD,
+              cursor: backingUp ? "default" : "pointer", fontSize:12, fontWeight:700, marginBottom:10, opacity: backingUp?0.6:1 }}>
+            {backingUp ? "Backing up…" : "Back up now"}
+          </button>
+          {backupMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: backupMsg.ok ? "#10b981" : "#ef4444" }}>{backupMsg.text}</div>}
           {backupsErr && <div style={{ fontSize:11, color:"#ef4444", lineHeight:1.4, marginBottom:8 }}>{backupsErr}</div>}
           {restoreMsg && <div style={{ fontSize:11, lineHeight:1.4, marginBottom:8, color: restoreMsg.ok ? "#10b981" : "#ef4444" }}>{restoreMsg.text}</div>}
           {backups === null && !backupsErr && <div style={{ fontSize:12, color:MUTED }}>Loading backups…</div>}
@@ -1731,6 +1878,31 @@ function SettingsModal(props) {
         {!(typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent)) && (
           <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
             <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
+              Install on this PC
+            </div>
+            {isStandalone() ? (
+              <div style={{ fontSize:12, color:"#10b981", fontWeight:600 }}>✓ Installed — you're running the app.</div>
+            ) : props.canInstall ? (
+              <>
+                <button onClick={props.onInstall}
+                  style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, width:"100%", boxSizing:"border-box",
+                    padding:"9px", borderRadius:6, border:"none", background:GOLD, color:NAVY, cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  ⬇ Install SynRegis as an app
+                </button>
+                <div style={{ fontSize:11, color:MUTED, marginTop:8, lineHeight:1.5 }}>
+                  Adds SynRegis to your desktop / Start menu and opens it in its own window — no browser tabs.
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize:11, color:MUTED, lineHeight:1.5 }}>
+                In Chrome or Edge, click the install icon (<span style={{ color:CREAM }}>⊕</span> / monitor icon) at the right of the address bar, or menu → "Install SynRegis CRM". Safari and Firefox can't install web apps — use Chrome or Edge.
+              </div>
+            )}
+          </div>
+        )}
+        {!(typeof navigator !== "undefined" && /SynRegisApp/.test(navigator.userAgent)) && (
+          <div style={{ marginTop:16, borderTop:"1px solid "+BORDER, paddingTop:14 }}>
+            <div style={{ fontSize:11, color:MUTED, textTransform:"uppercase", letterSpacing:"0.08em", fontWeight:600, marginBottom:8 }}>
               Android App
             </div>
             <a href="/synregis.apk" download
@@ -1763,14 +1935,12 @@ function LeadRow(props) {
   var showBadge = props.settings && props.settings.badge && (isOverdue || isDueToday);
   var badgeColor = isOverdue ? "#ef4444" : "#f59e0b";
   var badgeLabel = isOverdue ? "Overdue" : "Today";
-  var stale = props.settings && props.settings.stale ? staleDays(lead) : null;
-  var showStale = !showBadge && stale !== null;
   return (
     <div onClick={function(){ props.onSelect(lead); }}
       style={{
         padding:"12px 14px", cursor:"pointer", borderBottom:"1px solid "+BORDER,
         background: sel ? CARD2 : "transparent",
-        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : showStale ? "#f59e0b88" : "transparent")
+        borderLeft: sel ? "3px solid "+GOLD : "3px solid "+(showBadge ? badgeColor : "transparent")
       }}
       onMouseEnter={function(e){ if(!sel) e.currentTarget.style.background=CARD2+"88"; }}
       onMouseLeave={function(e){ if(!sel) e.currentTarget.style.background="transparent"; }}>
@@ -1781,11 +1951,6 @@ function LeadRow(props) {
         {showBadge && (
           <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#fff", background:badgeColor, borderRadius:4, padding:"1px 5px" }}>
             {badgeLabel}
-          </span>
-        )}
-        {showStale && (
-          <span style={{ flexShrink:0, marginLeft:6, fontSize:10, fontWeight:700, color:"#f59e0b", background:"#f59e0b22", border:"1px solid #f59e0b55", borderRadius:4, padding:"0px 5px" }}>
-            Quiet {stale}d
           </span>
         )}
       </div>
@@ -2107,6 +2272,7 @@ function AppInner() {
   var [filterPriority, setFilterPriority] = useState("All");
   var [filterStage, setFilterStage]       = useState("All");
   var [filterMissing, setFilterMissing]   = useState("All");
+  var [filterCompletion, setFilterCompletion] = useState("All");
   var [showFilters, setShowFilters]       = useState(false);
   var [showArchive, setShowArchive] = useState(false);
   var [showAdd, setShowAdd]           = useState(false);
@@ -2128,12 +2294,13 @@ function AppInner() {
   var [focusLeadIds, setFocusLeadIds]       = useState([]);
   var [showFocusPicker, setShowFocusPicker] = useState(false);
   var [focusPickerQuery, setFocusPickerQuery] = useState("");
-  var [quietExpanded, setQuietExpanded]   = useState(false); // GOING QUIET banner: show all stale leads, not just the first 5
+  var [installEvt, setInstallEvt]         = useState(_deferredInstall); // deferred PWA install prompt (desktop)
   var [appUpdate, setAppUpdate]           = useState(null); // {versionName, url} when a newer APK exists
   var [showPaste, setShowPaste]           = useState(null);   // null = closed, string = open with initial text
   var [sharedImg, setSharedImg]           = useState(null);   // image shared from the Android app
   var [addPrefill, setAddPrefill]         = useState(null);
   var [geminiKey, setGeminiKey]           = useState("");
+  var [followUpPopup, setFollowUpPopup]   = useState(null); // array of leads due today, when the popup should show
   var isMobile = useIsMobile();
   var backArmed = useRef(false);
   var layersRef = useRef([]);
@@ -2158,6 +2325,24 @@ function AppInner() {
       })
       .catch(function(){});
   }, []);
+
+  // ── PWA install prompt availability (desktop Chrome/Edge) ─────────────────
+  useEffect(function() {
+    function onAvail(){ setInstallEvt(_deferredInstall); }
+    function onInstalled(){ setInstallEvt(null); }
+    window.addEventListener("synregis-installable", onAvail);
+    window.addEventListener("synregis-installed", onInstalled);
+    return function(){
+      window.removeEventListener("synregis-installable", onAvail);
+      window.removeEventListener("synregis-installed", onInstalled);
+    };
+  }, []);
+
+  function installPwa() {
+    if (!_deferredInstall) return;
+    _deferredInstall.prompt();
+    _deferredInstall.userChoice.then(function(){ _deferredInstall = null; setInstallEvt(null); });
+  }
 
   // ── Firestore real-time subscription ──────────────────────────────────────
   useEffect(function() {
@@ -2316,6 +2501,21 @@ function AppInner() {
   // ── Settings persistence ───────────────────────────────────────────────────
   useEffect(function() { saveSettingsLS(settings); }, [settings]);
 
+  // ── Follow-up due-today popup (in-app, works on PC and phone alike) ────────
+  // Fires once per calendar day, the moment a lead's Next Follow-Up date arrives.
+  useEffect(function() {
+    if (!synced || !leads.length) return;
+    var today = new Date().toISOString().split("T")[0];
+    var lastShown = "";
+    try { lastShown = localStorage.getItem("synregis_followup_popup_date") || ""; } catch(e) {}
+    if (lastShown === today) return;
+    try { localStorage.setItem("synregis_followup_popup_date", today); } catch(e) {}
+    var due = leads.filter(function(l) {
+      return l.nextFollowUp === today && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted";
+    });
+    if (due.length > 0) setFollowUpPopup(due);
+  }, [leads, synced]);
+
   // ── Follow-up notifications (browser, when the CRM is opened on PC) ────────
   useEffect(function() {
     if (!settings.browserNotif) return;
@@ -2357,15 +2557,10 @@ function AppInner() {
     var followUps = leads
       .filter(function(l){ return l.nextFollowUp && l.pipelineStage !== "Lost" && l.pipelineStage !== "Unwanted"; })
       .map(function(l){ return { name: l.projectName, date: l.nextFollowUp }; });
-    var staleNames = leads
-      .filter(function(l){ return staleDays(l) !== null; })
-      .map(function(l){ return l.projectName; });
     var payload = {
       enabled: !!settings.appNotif,
       time: settings.notifTime || "09:00",
-      includeStale: !!settings.appNotifStale,
       followUps: followUps,
-      staleNames: staleNames,
     };
     try { window.SynRegisNative.scheduleReminders(JSON.stringify(payload)); } catch(e) {}
   }, [leads, settings, synced]);
@@ -2437,6 +2632,13 @@ function AppInner() {
       .sort(function(a, b){ return (b.savedAt || b.date || "").localeCompare(a.savedAt || a.date || ""); });
   }
 
+  // Manual, on-demand snapshot — same writeBackup() as the automatic ones, just
+  // triggered by a tap instead of a timer. Used as a pre-change safety checkpoint.
+  async function backupNow() {
+    if (!synced || !leads.length) throw new Error("Data hasn't finished syncing yet — wait a moment and try again.");
+    await writeBackup("manual");
+  }
+
   // Restore is NON-destructive: it re-adds/reverts every lead in the snapshot
   // (resurrecting anything deleted) but never removes leads created since.
   async function restoreBackup(backup) {
@@ -2455,6 +2657,7 @@ function AppInner() {
   // history. Back pops the sentinel → we close the top-most layer and re-arm
   // if layers remain. Closing everything via the UI consumes the sentinel.
   var layers = [];
+  if (followUpPopup)    layers.push(function(){ setFollowUpPopup(null); });
   if (showFilters) layers.push(function(){ setShowFilters(false); });
   if (showPaste !== null) layers.push(function(){ setShowPaste(null); setSharedImg(null); });
   if (showSettings)     layers.push(function(){ setShowSettings(false); });
@@ -2535,24 +2738,27 @@ function AppInner() {
     var matchSt  = filterStage === "All" || l.projectStage === filterStage;
     var matchReg = filterRegion === "All" || l.region === filterRegion;
     var matchMiss = filterMissing === "All" || !String(l[filterMissing] || "").trim();
+    var matchCompl = filterCompletion === "All" || completionQuarterKey(l) === filterCompletion;
     var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
     if (showArchive) return archived && matchQ;
-    return !archived && matchQ && matchP && matchPr && matchSt && matchReg && matchMiss;
+    return !archived && matchQ && matchP && matchPr && matchSt && matchReg && matchMiss && matchCompl;
   });
 
   function setFilter(category, value) {
     if (category === "clearAll") {
-      setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All");
+      setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All"); setFilterCompletion("All");
     }
-    else if (category === "priority") setFilterPriority(value);
-    else if (category === "stage")    setFilterStage(value);
-    else if (category === "region")   setFilterRegion(value);
-    else if (category === "missing")  setFilterMissing(value);
+    else if (category === "priority")    setFilterPriority(value);
+    else if (category === "stage")       setFilterStage(value);
+    else if (category === "region")      setFilterRegion(value);
+    else if (category === "missing")     setFilterMissing(value);
+    else if (category === "completion")  setFilterCompletion(value);
   }
   var activeFilters = [];
   if (filterPriority !== "All") activeFilters.push({ cat:"priority", label: filterPriority });
   if (filterStage !== "All")    activeFilters.push({ cat:"stage",    label: filterStage });
   if (filterRegion !== "All")   activeFilters.push({ cat:"region",   label: filterRegion });
+  if (filterCompletion !== "All") activeFilters.push({ cat:"completion", label: filterCompletion });
   if (filterMissing !== "All")  activeFilters.push({ cat:"missing",  label: (MISSING_FIELDS.find(function(m){ return m.key === filterMissing; }) || { label: filterMissing }).label });
 
   var counts = {};
@@ -2844,7 +3050,7 @@ function AppInner() {
                 </button>
                 <FilterMenu open={showFilters} onClose={function(){ setShowFilters(false); }}
                   leads={leads} regions={regions}
-                  values={{ priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing }}
+                  values={{ priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing, completion: filterCompletion }}
                   onChange={setFilter}/>
               </div>
               <button onClick={function(){ setAddPrefill(null); setShowAdd(true); }}
@@ -2908,34 +3114,6 @@ function AppInner() {
                       </div>
                     );
                   })}
-                </div>
-              );
-            })()}
-            {(function(){
-              if (!settings.banner || !settings.stale) return null;
-              var staleLeads = leads
-                .map(function(l){ return { lead: l, days: staleDays(l) }; })
-                .filter(function(x){ return x.days !== null; })
-                .sort(function(a,b){ return b.days - a.days; });
-              if (!staleLeads.length) return null;
-              return (
-                <div style={{ margin:"8px 10px 4px", padding:"8px 12px", borderRadius:8, background:"#f59e0b18", border:"1px solid #f59e0b55" }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"#f59e0b", marginBottom:4 }}>GOING QUIET ({staleLeads.length})</div>
-                  {(quietExpanded ? staleLeads : staleLeads.slice(0,5)).map(function(x){
-                    return (
-                      <div key={x.lead.id} onClick={function(){ setSelected(x.lead); }}
-                        style={{ fontSize:12, color:CREAM, cursor:"pointer", padding:"2px 0", display:"flex", justifyContent:"space-between" }}>
-                        <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:8 }}>{x.lead.projectName}</span>
-                        <span style={{ color:"#f59e0b", fontSize:11, flexShrink:0 }}>{x.days}d silent</span>
-                      </div>
-                    );
-                  })}
-                  {staleLeads.length > 5 && (
-                    <div onClick={function(){ setQuietExpanded(!quietExpanded); }}
-                      style={{ fontSize:11, fontWeight:600, color:"#f59e0b", marginTop:5, cursor:"pointer", userSelect:"none" }}>
-                      {quietExpanded ? "▲ Show less" : "▼ Show all " + staleLeads.length + " — tap each to open"}
-                    </div>
-                  )}
                 </div>
               );
             })()}
@@ -3065,11 +3243,21 @@ function AppInner() {
           onSaveGeminiKey={saveGeminiKey}
           onLoadBackups={loadBackups}
           onRestore={restoreBackup}
+          onBackupNow={backupNow}
           leadCount={leads.length}
+          canInstall={!!installEvt}
+          onInstall={installPwa}
         />
       )}
       {showExport !== null && (
         <ExportModal text={showExport} count={leads.length} onClose={function(){ setShowExport(null); }} />
+      )}
+      {followUpPopup && (
+        <FollowUpDueModal
+          leads={followUpPopup}
+          onSelect={function(l){ setSelected(l); setFollowUpPopup(null); }}
+          onClose={function(){ setFollowUpPopup(null); }}
+        />
       )}
     </div>
     </>
