@@ -2788,6 +2788,13 @@ function AppInner() {
 
   async function saveEdit() {
     var draft = editDraft;
+    var origLead = editLead;
+    // Close immediately — the write below happens in the background. Waiting for
+    // the Firestore round-trip to resolve before closing left the modal hanging
+    // open on a slow mobile connection until the user pressed Back.
+    setEditLead(null);
+    setEditDraft(null);
+    setSyncContact(false);
     try {
       // NEVER write callLog/meetingLog from the edit form — it doesn't touch them,
       // and writing back an in-memory copy could overwrite log entries added since
@@ -2797,10 +2804,54 @@ function AppInner() {
       delete fields.callLog;
       delete fields.meetingLog;
       delete fields.id;
+
+      // The Promoteur text is the source of truth for promoteurKey (the grouping
+      // key that drives call/meeting-log syncing) — recompute it whenever it's out
+      // of sync with the current Promoteur text, so editing Promoteur actually
+      // moves the project in/out of its group instead of silently leaving the old
+      // key (and old log sync) in place.
+      var promoteur = String(draft.promoteur || "").trim();
+      var derivedKey = promoteur.toLowerCase();
+      var oldKey = origLead.promoteurKey;
+      var newKey = draft.promoteurKey;
+      var keyMismatch = promoteur && derivedKey !== String(draft.promoteurKey || "").trim().toLowerCase();
+      if (keyMismatch) {
+        newKey = derivedKey;
+        fields.promoteurKey = derivedKey;
+        fields.promoteurFull = promoteur;
+      }
+
       await updateDoc(doc(db, "leads", String(draft.id)), fields);
-      if (syncContact && draft.promoteurKey && draft.promoteurKey.length > 2) {
+
+      // Promoteur was repointed away from its old group: any call/meeting log
+      // entries fanned out from that group belong there, not here — split them
+      // back off. Entries unique to this lead (never shared with a surviving
+      // group member) are left untouched.
+      if (keyMismatch && oldKey && oldKey.length > 2 && oldKey !== newKey) {
+        var oldGroupPeers = leads.filter(function(l) {
+          return String(l.id) !== String(draft.id) && l.promoteurKey === oldKey;
+        });
+        if (oldGroupPeers.length > 0) {
+          ["callLog", "meetingLog"].forEach(function(field) {
+            (draft[field] || []).forEach(function(entry) {
+              var sharedWithOldGroup = oldGroupPeers.some(function(l) {
+                return (l[field] || []).some(function(e) {
+                  return e.date === entry.date && e.note === entry.note;
+                });
+              });
+              if (sharedWithOldGroup) {
+                var patch = {}; patch[field] = arrayRemove(entry);
+                updateDoc(doc(db, "leads", String(draft.id)), patch)
+                  .catch(function(e){ console.error("Log split failed:", e); });
+              }
+            });
+          });
+        }
+      }
+
+      if (syncContact && newKey && newKey.length > 2) {
         var toSync = leads.filter(function(l) {
-          return String(l.id) !== String(draft.id) && l.promoteurKey === draft.promoteurKey;
+          return String(l.id) !== String(draft.id) && l.promoteurKey === newKey;
         });
         if (toSync.length > 0) {
           var batch = writeBatch(db);
@@ -2814,10 +2865,12 @@ function AppInner() {
           await batch.commit();
         }
       }
-    } catch(e) { console.error("Save failed:", e); }
-    setEditLead(null);
-    setEditDraft(null);
-    setSyncContact(false);
+    } catch(e) {
+      console.error("Save failed:", e);
+      alert("Save failed — " + ((e && e.code) === "permission-denied"
+        ? "the database refused the write (check Firestore rules)."
+        : ((e && e.message) || String(e))));
+    }
   }
 
   async function addLead(lead) {
