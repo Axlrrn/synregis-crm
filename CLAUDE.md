@@ -26,7 +26,9 @@ maintained with Claude Code. Owner: Axel (axlrrn@gmail.com) — the only authori
 - `leads/{id}` — one doc per project: `projectName` (required), `location`, `promoteur`,
   `promoteurKey` (lowercase grouping key — call/meeting logs sync across all leads sharing it),
   `promoteurFull`, `contactName`, `phone`, `units`, `unitDetails`, `amenities`, `projectStage`,
-  `pipelineStage`, `priority`, `notes`, `callLog[]`/`meetingLog[]` (`{date, note}`),
+  `pipelineStage`, `priority`, `notes`, `sourceText` (raw AI-extraction source text, kept out
+  of `notes` to avoid clutter — surfaced via a discreet "View source text" button/modal on the
+  Add/Edit forms and detail view), `callLog[]`/`meetingLog[]` (`{date, note}`),
   `nextFollowUp` (yyyy-mm-dd), `region`, `gpsCoords`, `attachments[]` (dead — no Storage),
   `createdAt`. Completion estimate (optional, set either way — never both): `completionType`
   (`""`/`"Month"`/`"Quarter"`), `completionMonth` (`yyyy-mm`, native `<input type="month">`) when

@@ -254,10 +254,16 @@ function mergeExtractedIntoLead(lead, f, rawText, regionsList) {
   }
   var today = new Date().toISOString().split("T")[0];
   var block = "--- AI update " + today + " ---";
-  if (conflicts.length) block += "\nNew values seen (kept yours): " + conflicts.join(" | ");
-  if (((f && f.notes) || "").trim()) block += "\n" + f.notes.trim();
-  if ((rawText || "").trim()) block += "\nSource:\n" + rawText.trim();
-  merged.notes = (String(merged.notes || "").trim() ? merged.notes + "\n\n" : "") + block;
+  var hasBlock = false;
+  if (conflicts.length) { block += "\nNew values seen (kept yours): " + conflicts.join(" | "); hasBlock = true; }
+  if (((f && f.notes) || "").trim()) { block += "\n" + f.notes.trim(); hasBlock = true; }
+  if (hasBlock) merged.notes = (String(merged.notes || "").trim() ? merged.notes + "\n\n" : "") + block;
+  // Raw source text is kept out of Notes to avoid clutter — stored on its own
+  // field, viewable on demand via the "View source text" button.
+  if ((rawText || "").trim()) {
+    var srcBlock = "--- " + today + " ---\n" + rawText.trim();
+    merged.sourceText = (String(lead.sourceText || "").trim() ? lead.sourceText.trim() + "\n\n" : "") + srcBlock;
+  }
   return merged;
 }
 
@@ -745,6 +751,41 @@ function RegionEditModal(props) {
   );
 }
 
+// Read-only viewer for the raw text/JSON an AI-extracted lead came from — kept
+// out of the Notes field so Notes stays clean; opened on demand via a discreet button.
+function SourceTextModal(props) {
+  var ovl = { position:"fixed", inset:0, background:"rgba(0,0,0,0.8)", zIndex:1200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 };
+  var sht = { background:CARD, border:"1px solid "+BORDER, borderRadius:12, width:"100%", maxWidth:520, maxHeight:"80vh", display:"flex", flexDirection:"column", overflow:"hidden" };
+  return (
+    <div style={ovl} onClick={function(e){ if(e.target===e.currentTarget) props.onClose(); }}>
+      <div style={sht}>
+        <div style={{ padding:"14px 18px", borderBottom:"1px solid "+BORDER, color:GOLD, fontWeight:700, fontSize:14 }}>Source Text</div>
+        <div style={{ flex:1, overflowY:"auto", padding:"16px 18px", fontSize:13, color:CREAM, whiteSpace:"pre-wrap", lineHeight:1.6 }}>
+          {props.text}
+        </div>
+        <div style={{ padding:"12px 18px", borderTop:"1px solid "+BORDER, flexShrink:0, display:"flex", justifyContent:"flex-end" }}>
+          <button onClick={props.onClose} style={{ padding:"7px 16px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:12 }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Tiny link-style button shown only when sourceText exists — opens SourceTextModal.
+function SourceTextButton(props) {
+  var [open, setOpen] = useState(false);
+  if (!(props.text || "").trim()) return null;
+  return (
+    <div style={{ textAlign:"right", marginTop:-10, marginBottom:14 }}>
+      <button type="button" onClick={function(){ setOpen(true); }}
+        style={{ fontSize:11, color:MUTED, background:"transparent", border:"none", cursor:"pointer", textDecoration:"underline", padding:0 }}>
+        📄 View source text
+      </button>
+      {open && <SourceTextModal text={props.text} onClose={function(){ setOpen(false); }}/>}
+    </div>
+  );
+}
+
 function EditForm(props) {
   var lead = props.lead;
   var set = props.setLead;
@@ -794,6 +835,7 @@ function EditForm(props) {
           <Fld label="Region" value={lead.region||""} onChange={f("region")} type="select" options={[""].concat(props.regions||DEFAULT_REGIONS)}/>
           <Fld label="GPS Coordinates" value={lead.gpsCoords||""} onChange={f("gpsCoords")}/>
           <Fld label="Notes" value={lead.notes} onChange={f("notes")} type="textarea"/>
+          <SourceTextButton text={lead.sourceText}/>
         </div>
         <div style={{ padding:"14px 20px", borderTop:"1px solid "+BORDER, flexShrink:0, display:"flex", gap:10, justifyContent:"flex-end" }}>
           <button style={{ padding:"8px 20px", borderRadius:6, border:"1px solid "+BORDER, background:CARD2, color:CREAM, cursor:"pointer", fontSize:13 }} onClick={props.onCancel}>Cancel</button>
@@ -809,7 +851,7 @@ function AddForm(props) {
     projectName:"", location:"", promoteur:"", promoteurKey:"", promoteurFull:"",
     contactName:"", phone:"", units:"", unitDetails:"", amenities:"",
     projectStage:PROJECT_STAGES[0], pipelineStage:PIPELINE_STAGES[0],
-    priority:"", notes:"", callLog:[], nextFollowUp:"", createdAt:"",
+    priority:"", notes:"", sourceText:"", callLog:[], nextFollowUp:"", createdAt:"",
     region:"", gpsCoords:"",
     completionType:"", completionMonth:"", completionQuarter:"", completionYear:""
   };
@@ -848,6 +890,7 @@ function AddForm(props) {
           <Fld label="Region" value={form.region||""} onChange={f("region")} type="select" options={[""].concat(props.regions||DEFAULT_REGIONS)}/>
           <Fld label="GPS Coordinates" value={form.gpsCoords||""} onChange={f("gpsCoords")}/>
           <Fld label="Notes" value={form.notes} onChange={f("notes")} type="textarea"/>
+          <SourceTextButton text={form.sourceText}/>
         </div>
         <div style={{ padding:"14px 20px", borderTop:"1px solid "+BORDER, flexShrink:0 }}>
           {formError && <div style={{ fontSize:12, color:"#ef4444", marginBottom:8, textAlign:"right" }}>{formError}</div>}
@@ -1027,6 +1070,7 @@ function DetailPanel(props) {
   var lead = props.lead;
   var allLeads = props.allLeads;
   var [deleteStep, setDeleteStep] = useState(0);
+  var [showSource, setShowSource] = useState(false);
   if (!lead) return (
     <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:MUTED, fontSize:14 }}>
       Select a project to view details
@@ -1135,6 +1179,15 @@ function DetailPanel(props) {
         <div style={sec}>
           <div style={lbl}>Notes</div>
           <div style={{ ...val, background:CARD2, borderRadius:6, padding:"10px 12px", border:"1px solid "+BORDER, whiteSpace:"pre-wrap", lineHeight:1.6 }}>{lead.notes}</div>
+        </div>
+      )}
+      {lead.sourceText && (
+        <div style={{ ...sec, marginTop:-10, textAlign:"right" }}>
+          <button type="button" onClick={function(){ setShowSource(true); }}
+            style={{ fontSize:11, color:MUTED, background:"transparent", border:"none", cursor:"pointer", textDecoration:"underline", padding:0 }}>
+            📄 View source text
+          </button>
+          {showSource && <SourceTextModal text={lead.sourceText} onClose={function(){ setShowSource(false); }}/>}
         </div>
       )}
 
@@ -2467,7 +2520,8 @@ function AppInner() {
       unitDetails: (f.unitDetails || "").trim(),
       amenities: (f.amenities || "").trim(),
       region: regions.indexOf(region) !== -1 ? region : "",
-      notes: ((f.notes || "").trim() + "\n\n--- Source text ---\n" + (rawText || "")).trim(),
+      notes: (f.notes || "").trim(),
+      sourceText: (rawText || "").trim(),
     });
     setShowPaste(null);
     setShowAdd(true);
