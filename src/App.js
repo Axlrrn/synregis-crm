@@ -1326,6 +1326,7 @@ function FilterMenu(props) {
     return Object.keys(seen).sort(function(a,b){ return completionSortKey(a) - completionSortKey(b); });
   })();
   var cats = [
+    { id:"pipeline",   label:"Prospecting Stages",  current: v.pipeline,   options: PIPELINE_STAGES },
     { id:"priority",   label:"Priority",            current: v.priority,   options: FILTER_PRIORITIES },
     { id:"stage",      label:"Construction Stage",  current: v.stage,      options: PROJECT_STAGES },
     { id:"region",     label:"Region",               current: v.region,     options: props.regions },
@@ -1340,6 +1341,9 @@ function FilterMenu(props) {
   }
   function countFor(catId, label) {
     var value = optionValue(catId, label);
+    // Pipeline stage counts include archived stages (Lost/Unwanted) same as
+    // the old always-visible stage bar did — every other category excludes them.
+    if (catId === "pipeline") return props.leads.filter(function(l){ return l.pipelineStage === value; }).length;
     return props.leads.filter(function(l){
       if (l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted") return false;
       if (catId === "priority")    return l.priority === value;
@@ -2801,13 +2805,17 @@ function AppInner() {
     var matchCompl = filterCompletion === "All" || completionQuarterKey(l) === filterCompletion;
     var archived = l.pipelineStage === "Lost" || l.pipelineStage === "Unwanted";
     if (showArchive) return archived && matchQ;
-    return !archived && matchQ && matchP && matchPr && matchSt && matchReg && matchMiss && matchCompl;
+    // Archived stages (Lost/Unwanted) stay out of the general "All" list — the only way
+    // to see them here is to explicitly pick that stage in the Prospecting Stages filter.
+    if (archived && filterPipeline === "All") return false;
+    return matchQ && matchP && matchPr && matchSt && matchReg && matchMiss && matchCompl;
   });
 
   function setFilter(category, value) {
     if (category === "clearAll") {
-      setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All"); setFilterCompletion("All");
+      setFilterPipeline("All"); setFilterPriority("All"); setFilterStage("All"); setFilterRegion("All"); setFilterMissing("All"); setFilterCompletion("All");
     }
+    else if (category === "pipeline")    setFilterPipeline(value);
     else if (category === "priority")    setFilterPriority(value);
     else if (category === "stage")       setFilterStage(value);
     else if (category === "region")      setFilterRegion(value);
@@ -2815,16 +2823,12 @@ function AppInner() {
     else if (category === "completion")  setFilterCompletion(value);
   }
   var activeFilters = [];
+  if (filterPipeline !== "All")  activeFilters.push({ cat:"pipeline", label: filterPipeline });
   if (filterPriority !== "All") activeFilters.push({ cat:"priority", label: filterPriority });
   if (filterStage !== "All")    activeFilters.push({ cat:"stage",    label: filterStage });
   if (filterRegion !== "All")   activeFilters.push({ cat:"region",   label: filterRegion });
   if (filterCompletion !== "All") activeFilters.push({ cat:"completion", label: filterCompletion });
   if (filterMissing !== "All")  activeFilters.push({ cat:"missing",  label: (MISSING_FIELDS.find(function(m){ return m.key === filterMissing; }) || { label: filterMissing }).label });
-
-  var counts = {};
-  PIPELINE_STAGES.forEach(function(s) {
-    counts[s] = leads.filter(function(l) { return l.pipelineStage === s; }).length;
-  });
 
   var selFull = selected
     ? leads.find(function(l) { return l.id === selected.id; }) || selected
@@ -3127,21 +3131,6 @@ function AppInner() {
         />
       ) : (
       <>
-      {/* Stage filter bar */}
-      <div style={{ display:"flex", gap:6, padding:"10px 16px", flexShrink:0, overflowX:"auto", background:CARD }}>
-        {PIPELINE_STAGES.map(function(s){
-          return (
-            <div key={s} onClick={function(){ setFilterPipeline(filterPipeline===s?"All":s); }}
-              style={{ flexShrink:0, padding:"5px 12px", borderRadius:99, fontSize:11, fontWeight:600, cursor:"pointer",
-                background: filterPipeline===s ? PC[s] : PC[s]+"22",
-                color: filterPipeline===s ? "#fff" : PC[s],
-                border:"1px solid "+(filterPipeline===s?PC[s]:PC[s]+"44") }}>
-              {s} ({counts[s]||0})
-            </div>
-          );
-        })}
-      </div>
-
       {/* Main layout */}
       <div style={{ display:"flex", flex:1, overflow:"hidden", position:"relative" }}>
 
@@ -3163,7 +3152,7 @@ function AppInner() {
                 </button>
                 <FilterMenu open={showFilters} onClose={function(){ setShowFilters(false); }}
                   leads={leads} regions={regions}
-                  values={{ priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing, completion: filterCompletion }}
+                  values={{ pipeline: filterPipeline, priority: filterPriority, stage: filterStage, region: filterRegion, missing: filterMissing, completion: filterCompletion }}
                   onChange={setFilter}/>
               </div>
               <button onClick={function(){ setAddPrefill(null); setShowAdd(true); }}
